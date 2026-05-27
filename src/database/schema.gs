@@ -1,154 +1,143 @@
 /**
- * Database Schema for ERP Keuangan Sekolah Rakyat
- * Google Sheets-based relational database
+ * ============================================================
+ * DATABASE SCHEMA - ERP Keuangan Sekolah Rakyat
+ * Fase 2: Extended schema untuk multi-tenancy & fitur lengkap
+ * ============================================================
  */
 
 const DB_CONFIG = {
   SPREADSHEET_NAME: 'ERP_Sekolah_Rakyat',
+  VERSION: '2.0.0',
   SHEETS: {
-    TRANSACTIONS: 'Data_Transaksi',
-    SCHOOLS: 'Data_Sekolah',
+    TRANSACTIONS : 'Data_Transaksi',
+    SCHOOLS      : 'Data_Sekolah',
     SUBSCRIPTIONS: 'Data_Subscription',
-    LOGS: 'System_Logs',
-    TEMPLATES: 'Template_RKKAL'
+    LOGS         : 'System_Logs',
+    TEMPLATES    : 'Template_RKKAL',
+    RKKAL        : 'Data_RKKAL',
+    REALISASI    : 'Data_Realisasi',
+    NOTIFICATIONS: 'Notifikasi'
   }
 };
 
-/**
- * Initialize database schema with self-healing
- */
+// ── Header Definitions ──────────────────────────────────────
+const SCHEMA = {
+  Data_Transaksi: [
+    'ID_Transaksi','School_ID','Kode_Anggaran','Uraian_MAK',
+    'Uraian_Pembayaran','Nama_Toko','Jumlah_Rupiah','Terbilang',
+    'Tahun_Anggaran','Bulan_Pelaksanaan','Status_Verifikasi',
+    'Timestamp','Input_By','Kode_Program','Kode_Komponen',
+    'Jenis_Belanja','Kuantitas','Harga_Satuan','Catatan'
+  ],
+  Data_Sekolah: [
+    'School_ID','Nama_Sekolah','Kode_Sekolah','Alamat',
+    'Kota_Kabupaten','Provinsi','Kepala_Sekolah','Bendahara',
+    'No_Telp','Email','Status_Aktif','Tanggal_Daftar','Plan_Type',
+    'Telegram_Chat_ID','Quota_Bulanan','Total_Transaksi'
+  ],
+  Data_Subscription: [
+    'Subscription_ID','School_ID','Plan_Type','Start_Date',
+    'End_Date','Status','Payment_Status','Amount','Notes'
+  ],
+  System_Logs: [
+    'Log_ID','Timestamp','Level','Module','School_ID','Message','Details'
+  ],
+  Template_RKKAL: [
+    'Template_ID','School_ID','Tahun_Anggaran','Template_JSON',
+    'Last_Updated','Status','Total_Pagu'
+  ],
+  Data_RKKAL: [
+    'RKKAL_ID','School_ID','Tahun_Anggaran','Kode_Program',
+    'Kode_Kegiatan','Kode_Komponen','Kode_Akun','Uraian',
+    'Volume','Satuan','Harga_Satuan','Pagu_Anggaran',
+    'Realisasi_Jan','Realisasi_Feb','Realisasi_Mar','Realisasi_Apr',
+    'Realisasi_Mei','Realisasi_Jun','Realisasi_Jul','Realisasi_Agu',
+    'Realisasi_Sep','Realisasi_Okt','Realisasi_Nov','Realisasi_Des',
+    'Total_Realisasi','Sisa_Anggaran','Persen_Realisasi'
+  ],
+  Data_Realisasi: [
+    'Realisasi_ID','School_ID','RKKAL_ID','Kode_Anggaran',
+    'Bulan','Tahun','Jumlah','Timestamp','Status','Transaksi_IDs'
+  ],
+  Notifikasi: [
+    'Notif_ID','School_ID','Telegram_Chat_ID','Pesan',
+    'Timestamp','Status_Kirim','Jenis','Reference_ID'
+  ]
+};
+
+// ── initDatabase ─────────────────────────────────────────────
 function initDatabase() {
   try {
-    // Check if spreadsheet exists
-    let ss = SpreadsheetApp.openByName(DB_CONFIG.SPREADSHEET_NAME);
-    
-    // Auto-create if missing
+    let ss;
+    try {
+      ss = SpreadsheetApp.openByName(DB_CONFIG.SPREADSHEET_NAME);
+    } catch (e) {
+      ss = null;
+    }
+
     if (!ss) {
       ss = SpreadsheetApp.create(DB_CONFIG.SPREADSHEET_NAME);
-      
-      // Auto-create sheets with headers
-      createAllSheetsWithHeaders(ss);
     }
-    
+
+    // Ensure every sheet exists with correct headers
+    Object.entries(SCHEMA).forEach(([name, headers]) => {
+      let sheet = ss.getSheetByName(name);
+      if (!sheet) {
+        sheet = ss.insertSheet(name);
+        sheet.appendRow(headers);
+        _styleHeader(sheet, headers.length);
+      } else {
+        // Heal missing headers
+        const existing = sheet.getRange(1,1,1,Math.max(sheet.getLastColumn(),1)).getValues()[0];
+        if (existing.filter(h => h && h.toString().trim()).length < 3) {
+          sheet.clearContents();
+          sheet.appendRow(headers);
+          _styleHeader(sheet, headers.length);
+        }
+      }
+    });
+
+    // Remove default "Sheet1" if present
+    const defaultSheet = ss.getSheetByName('Sheet1');
+    if (defaultSheet && ss.getSheets().length > 1) {
+      ss.deleteSheet(defaultSheet);
+    }
+
     return ss;
-    
-  } catch (error) {
-    Logger.log('Database init error: ' + error.message);
+  } catch (err) {
+    Logger.log('initDatabase ERROR: ' + err.message);
     return null;
   }
 }
 
-/**
- * Create all sheets with required headers
- */
-function createAllSheetsWithHeaders(ss) {
-  // 1. Transactions Sheet
-  let transactionsSheet = createSheetIfNotExists(ss, DB_CONFIG.SHEETS.TRANSACTIONS);
-  transactionsSheet.clear();
-  transactionsSheet.appendRow([
-    'ID_Transaksi',
-    'Kode_Anggaran',
-    'Nama_Kegiatan',
-    'Jumlah_Rupiah',
-    'Timestamp',
-    'Status_Verifikasi',
-    'School_ID',
-    'Kode_Program',
-    'Kode_Komponen',
-    'Jenis_Belanja',
-    'Kuantitas',
-    'Harga_Satuan'
-  ]);
-  
-  // 2. Schools Sheet
-  let schoolsSheet = createSheetIfNotExists(ss, DB_CONFIG.SHEETS.SCHOOLS);
-  schoolsSheet.clear();
-  schoolsSheet.appendRow([
-    'School_ID',
-    'Nama_Sekolah',
-    'Alamat_Sekolah',
-    'Kepala_Sekolah',
-    'Bendahara',
-    'Status_Aktif',
-    'Tanggal_Daftar',
-    'Plan_Type'
-  ]);
-  
-  // 3. Subscriptions Sheet
-  let subscriptionSheet = createSheetIfNotExists(ss, DB_CONFIG.SHEETS.SUBSCRIPTIONS);
-  subscriptionSheet.clear();
-  subscriptionSheet.appendRow([
-    'Subscription_ID',
-    'School_ID',
-    'Start_Date',
-    'End_Date',
-    'Status',
-    'Payment_Status'
-  ]);
-  
-  // 4. Logs Sheet
-  let logsSheet = createSheetIfNotExists(ss, DB_CONFIG.SHEETS.LOGS);
-  logsSheet.clear();
-  logsSheet.appendRow([
-    'Log_ID',
-    'Timestamp',
-    'Level',
-    'Module',
-    'Message',
-    'Details'
-  ]);
-  
-  // 5. Templates Sheet
-  let templatesSheet = createSheetIfNotExists(ss, 'Template_RKKAL');
-  templatesSheet.clear();
-  templatesSheet.appendRow([
-    'Template_ID',
-    'School_ID',
-    'Template_JSON',
-    'Last_Updated',
-    'Status'
-  ]);
+function _styleHeader(sheet, colCount) {
+  const range = sheet.getRange(1, 1, 1, colCount);
+  range.setBackground('#1a237e')
+       .setFontColor('#ffffff')
+       .setFontWeight('bold')
+       .setHorizontalAlignment('center');
+  sheet.setFrozenRows(1);
 }
 
-/**
- * Create sheet if not exists
- */
+function getDatabase() { return initDatabase(); }
+
 function createSheetIfNotExists(ss, sheetName) {
   let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
     sheet = ss.insertSheet(sheetName);
+    if (SCHEMA[sheetName]) {
+      sheet.appendRow(SCHEMA[sheetName]);
+      _styleHeader(sheet, SCHEMA[sheetName].length);
+    }
   }
   return sheet;
 }
 
-/**
- * Get database connection
- */
-function getDatabase() {
-  return initDatabase();
-}
-
-/**
- * Validate data race conditions
- */
 function checkDataRace(sheetName, rowData) {
   try {
-    const ss = getDatabase();
-    const sheet = ss.getSheetByName(sheetName);
-    
-    // Simple race condition check - lock mechanism
     const lock = LockService.getPublicLock();
-    const acquired = lock.tryLock(10000); // 10 seconds
-    
-    if (!acquired) {
-      Logger.log('Data race detected - locktimeout');
-      return false;
-    }
-    
-    return true;
-    
-  } catch (error) {
-    Logger.log('Race check error: ' + error.message);
+    return lock.tryLock(10000);
+  } catch (e) {
     return false;
   }
 }

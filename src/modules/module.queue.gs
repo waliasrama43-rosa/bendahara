@@ -1,97 +1,50 @@
 /**
- * Anti-Spam Queueing System
- * Prevents duplicate execution with throttling
+ * ============================================================
+ * MODULE QUEUE - Anti-Spam & Rate Limiting
+ * Fase 2: CacheService-based throttling, 5 detik per aksi
+ * ============================================================
  */
 
 const Queue = {
-  /**
-   * Check and queue request
-   */
+
   check: function(params) {
     try {
-      const userId = params.userId || 'anonymous';
-      const action = params.action;
-      const timestamp = Date.now();
-      
-      // Check for duplicate within 5 seconds
-      const cache = CacheService.getUserCache();
-      const cacheKey = 'spam_' + userId + '_' + action;
-      const cached = cache.get(cacheKey);
-      
+      const userId  = params.userId || 'anonymous';
+      const action  = params.action || 'default';
+      const key     = 'spam_'+userId+'_'+action;
+      const cache   = CacheService.getScriptCache();
+      const cached  = cache.get(key);
+
       if (cached) {
-        Logger.log('SPAM DETECTED: ' + userId + ' - ' + action);
-        return {
-          status: 'spam',
-          message: 'Tindakan terlalu cepat. Silakan tunggu.',
-          retryAfter: 5000
-        };
+        return { status:'spam', message:'Terlalu cepat. Tunggu 5 detik.', retryAfter:5000 };
       }
-      
-      // Add to cache with 5 second TTL
-      cache.put(cacheKey, timestamp, 5);
-      
-      return {
-        status: 'allowed',
-        message: 'Request diterima',
-        queueId: 'Q-' + timestamp
-      };
-      
-    } catch (error) {
-      Logger.log('Queue check error: ' + error.message);
-      return {
-        status: 'error',
-        message: 'System error',
-        logId: 'QUEUE_' + Date.now()
-      };
+
+      cache.put(key, Date.now().toString(), 5); // 5 detik TTL
+      return { status:'allowed', queueId:'Q-'+Date.now() };
+
+    } catch(e) {
+      Logger.log('Queue.check ERROR: '+e.message);
+      return { status:'allowed', queueId:'Q-fallback' }; // fail-open
     }
   },
-  
-  /**
-   * Process queue items
-   */
+
   process: function(params) {
     try {
-      const queueId = params.queueId;
-      const action = params.action;
-      
-      // Process the queued action
-      const result = this.executeAction(action, params);
-      
-      return result;
-      
-    } catch (error) {
-      Logger.log('Queue process error: ' + error.message);
-      return {
-        status: 'error',
-        message: 'Failed to process queue',
-        logId: 'QUEUE_PROC_' + Date.now()
-      };
+      switch(params.action) {
+        case 'input_data'  : return Controller.Input.process(params);
+        case 'export_excel': return Controller.Export.process(params);
+        case 'verify_trans': return Controller.Validation.verify(params);
+        default: return Response.json({ status:'error', message:'Unknown queued action' });
+      }
+    } catch(e) {
+      Logger.log('Queue.process ERROR: '+e.message);
+      return Response.json({ status:'error', message:'Queue process error' });
     }
   },
-  
-  /**
-   * Execute queued action
-   */
-  executeAction: function(action, params) {
-    // Route to appropriate handler
-    switch (action) {
-      case 'input_data':
-        return Controller.Input.process(params);
-      case 'export_excel':
-        return Controller.Export.process(params);
-      case 'verify_trans':
-        return Controller.Validation.verify(params);
-      default:
-        return { status: 'error', message: 'Unknown action' };
-    }
-  },
-  
-  /**
-   * Clear spam cache
-   */
+
   clear: function(userId, action) {
-    const cache = CacheService.getUserCache();
-    const cacheKey = 'spam_' + userId + '_' + action;
-    cache.remove(cacheKey);
+    try {
+      CacheService.getScriptCache().remove('spam_'+userId+'_'+action);
+    } catch(e) {}
   }
 };

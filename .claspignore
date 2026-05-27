@@ -1,0 +1,5 @@
+**/**
+!src/**/*
+!appsscript.json
+!Kode.js
+!cloudflare

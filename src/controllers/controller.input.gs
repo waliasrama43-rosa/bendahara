@@ -6,6 +6,8 @@
  * - Kolom C: Jumlah Rupiah
  */
 
+var Controller = (typeof Controller !== 'undefined' && Controller) || {};
+
 Controller.Input = {
   /**
    * Process data input from user form

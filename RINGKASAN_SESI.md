@@ -205,3 +205,43 @@ TELEGRAM_ADMIN_CHAT = chat ID admin
 
 *File ini terakhir diperbarui: Mei 2026*
 *Versi sistem: 4.0.0*
+
+
+
+---
+
+## 🆕 UPDATE: FASE 5 SELESAI (RKKAL Fleksibel & RAB Generator)
+
+### Bug penting yang sudah diperbaiki:
+- **TDZ error** `Cannot access 'Controller' before initialization` → semua 5 controller
+  diganti dari `const Controller` ke `var Controller = (typeof Controller...)`.
+  Kini urutan load controller TIDAK lagi masalah (order-independent).
+
+### File baru/berubah di Fase 5:
+- `src/controllers/controller.rab.gs` (BARU) — RAB generator, edit alokasi, approval, getSisaBulan
+- `src/controllers/controller.rkkal.gs` — + inputManual + parseFlexible (paste Excel)
+- `src/database/schema.gs` — + sheet `RAB_Bulanan` (RAB_ID, Alokasi_Jan..Des, Status_RAB, Approved_By)
+- `src/main.gs` — + endpoint: input_rkkal_manual, parse_rkkal, generate_rab, get_rab, update_rab, approve_rab
+- `src/ui/ui.components.gs` — + menu "RAB Bulanan"
+- `src/ui/ui.pages.gs` — halaman RKKAL ber-tab (Manual/Paste/Upload) + halaman RAB
+- `src/ui/ui.js.gs` — + fungsi manual/paste RKKAL & generate/edit/approve RAB
+
+### Urutan file GAS sekarang (17 file):
+01_schema, 02_database, 03_queue, 04_selfhealing, 05_telegram, 06_dashboard,
+07_controller_rkkal, 08_controller_input, 09_controller_export,
+10_controller_validation, 11_controller_correction, **11b_controller_rab (BARU)**,
+12_style_css, 13_ui_components, 14_ui_js, 15_ui_pages, 16_main
+
+### Status visi 4-tahap user:
+1. Input RKKAL fleksibel ✅ SELESAI (manual + paste + upload)
+2. RKKAL → RAB per bulan ✅ SELESAI (generate + edit + approval)
+3. Belanja + upload bukti (nota/KTP/NPWP) ⏳ FASE 6 BERIKUTNYA
+4. Dashboard interaktif real-time ⚠️ dasar ada, drill-down di FASE 7
+5. Subscription ⏳ FASE 8
+
+### LANGKAH BERIKUTNYA — FASE 6: Belanja & Upload Bukti
+- Form belanja yang menarik dana dari RAB bulan terpilih (validasi sisa alokasi)
+- Upload foto bukti ke Google Drive (nota, kwitansi, foto barang, KTP, NPWP vendor)
+- Kwitansi auto-generate, kalkulator pajak (PPh 22/23, PPN), checklist kelengkapan
+
+**Buka sesi baru dengan:** "Lanjut FASE 6: Belanja & Upload Bukti. Baca RINGKASAN_SESI.md."

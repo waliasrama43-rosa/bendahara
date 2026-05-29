@@ -153,3 +153,53 @@ Berarti **fondasi 100% solid**. Lapor ke Kiro di sesi berikutnya:
 ---
 
 *Checklist ini dibuat Kiro AI — verifikasi 16 file selesai, urutan load sudah dikoreksi.*
+
+
+
+---
+---
+
+# 🆕 UPDATE FASE 5 — RKKAL Fleksibel & RAB Generator
+
+Karena sistem sudah Anda rakit, untuk fitur FASE 5 cukup **perbarui 6 file**
+dan **tambah 1 file baru**. Tidak perlu rakit ulang dari nol.
+
+## A. TAMBAH 1 FILE BARU
+
+| Nama File di GAS | Salin dari GitHub |
+|------------------|-------------------|
+| `11b_controller_rab` | [src/controllers/controller.rab.gs](https://github.com/waliasrama43-rosa/bendahara/blob/fase-2-4-erp-complete/src/controllers/controller.rab.gs) |
+
+> Cara: ikon **+** → Script → nama `11b_controller_rab` → tempel → simpan.
+> (Nama bebas asalkan diawali angka setelah 11; urutan controller kini fleksibel.)
+
+## B. PERBARUI 6 FILE (hapus isi lama → tempel versi baru)
+
+| File di GAS | Salin ulang dari GitHub | Yang berubah |
+|-------------|--------------------------|--------------|
+| `01_schema` | [schema.gs](https://github.com/waliasrama43-rosa/bendahara/blob/fase-2-4-erp-complete/src/database/schema.gs) | + tabel RAB_Bulanan |
+| `07_controller_rkkal` | [controller.rkkal.gs](https://github.com/waliasrama43-rosa/bendahara/blob/fase-2-4-erp-complete/src/controllers/controller.rkkal.gs) | + input manual & paste |
+| `13_ui_components` | [ui.components.gs](https://github.com/waliasrama43-rosa/bendahara/blob/fase-2-4-erp-complete/src/ui/ui.components.gs) | + menu RAB Bulanan |
+| `14_ui_js` | [ui.js.gs](https://github.com/waliasrama43-rosa/bendahara/blob/fase-2-4-erp-complete/src/ui/ui.js.gs) | + fungsi RKKAL/RAB |
+| `15_ui_pages` | [ui.pages.gs](https://github.com/waliasrama43-rosa/bendahara/blob/fase-2-4-erp-complete/src/ui/ui.pages.gs) | + halaman tab & RAB |
+| `16_main` | [main.gs](https://github.com/waliasrama43-rosa/bendahara/blob/fase-2-4-erp-complete/src/main.gs) | + 6 endpoint baru |
+
+## C. DEPLOY ULANG (WAJIB)
+```
+□ Klik Deploy → Kelola deployment
+□ Klik ikon pensil (edit) deployment aktif
+□ Versi: pilih "Versi baru"
+□ Klik Deploy
+   (URL TIDAK berubah — bookmark tetap sama)
+```
+
+## D. UJI FITUR FASE 5
+```
+□ Buka menu "Input / Upload RKKAL" → tab Input Manual → isi 2-3 baris → Simpan
+□ Tab "Tempel dari Excel" → tempel data → Pratinjau → Simpan
+□ Buka menu "RAB Bulanan" → pilih tahun → Generate RAB → muncul tabel
+□ Klik ✏️ pada satu item → ubah alokasi bulan → Simpan
+□ Klik "Setujui Semua (Kepsek)" → status berubah jadi approved
+```
+
+> Jika muncul error, catat pesannya dan laporkan ke Kiro di sesi berikutnya.

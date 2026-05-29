@@ -1,104 +1,107 @@
 /**
- * Self-Healing Module
- * Automatically creates missing folders, templates, and headers
+ * ============================================================
+ * MODULE SELF-HEALING - Auto-repair database & structure
+ * Fase 2: Extended healing untuk semua sheet baru
+ * ============================================================
  */
 
 const SelfHealing = {
-  /**
-   * Check and heal database structure
-   */
+
+  // ── Full check & heal ────────────────────────────────────
   checkAndHeal: function() {
     try {
       const ss = Database.getDatabase();
-      if (!ss) return false;
-      
-      // Check and heal all required sheets
-      const requiredSheets = [
-        'Data_Transaksi',
-        'Data_Sekolah',
-        'Data_Subscription',
-        'System_Logs',
-        'Template_RKKAL'
-      ];
-      
-      requiredSheets.forEach(function(sheetName) {
-        if (!ss.getSheetByName(sheetName)) {
-          this.createSheetWithHeaders(sheetName);
+      if (!ss) {
+        Logger.log('SelfHealing: Database tidak dapat diakses, melakukan create ulang...');
+        initDatabase();
+        return false;
+      }
+
+      let healed = 0;
+      Object.keys(SCHEMA).forEach(sheetName => {
+        const sheet = ss.getSheetByName(sheetName);
+        if (!sheet) {
+          Logger.log('SelfHealing: Sheet hilang → ' + sheetName);
+          createSheetIfNotExists(ss, sheetName);
+          healed++;
+        } else {
+          // Heal header jika kosong
+          const firstRow = sheet.getRange(1,1,1,Math.max(sheet.getLastColumn(),1)).getValues()[0];
+          const nonEmpty = firstRow.filter(h => h && h.toString().trim()).length;
+          if (nonEmpty < 2) {
+            Logger.log('SelfHealing: Header rusak pada sheet → ' + sheetName);
+            sheet.clearContents();
+            sheet.appendRow(SCHEMA[sheetName]);
+            _styleHeader(sheet, SCHEMA[sheetName].length);
+            healed++;
+          }
         }
       });
-      
+
+      Logger.log(`SelfHealing selesai: ${healed} sheet diperbaiki`);
       return true;
-      
-    } catch (error) {
-      Logger.log('Self-healing error: ' + error.message);
+
+    } catch(err) {
+      Logger.log('SelfHealing.checkAndHeal ERROR: '+err.message);
       return false;
     }
   },
-  
-  /**
-   * Create sheet with default headers
-   */
+
   createSheetWithHeaders: function(sheetName) {
     try {
       const ss = Database.getDatabase();
+      if (!ss) return false;
       const sheet = ss.insertSheet(sheetName);
-      
-      let headers = [];
-      switch (sheetName) {
-        case 'Data_Transaksi':
-          headers = [
-            'ID_Transaksi', 'Kode_Anggaran', 'Nama_Kegiatan', 'Jumlah_Rupiah',
-            'Timestamp', 'Status_Verifikasi', 'School_ID', 'Kode_Program',
-            'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan'
-          ];
-          break;
-        case 'Data_Sekolah':
-          headers = [
-            'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
-            'Bendahara', 'Status_Aktif', 'Tanggal_Daftar', 'Plan_Type'
-          ];
-          break;
-        case 'Data_Subscription':
-          headers = [
-            'Subscription_ID', 'School_ID', 'Start_Date', 'End_Date',
-            'Status', 'Payment_Status'
-          ];
-          break;
-        case 'System_Logs':
-          headers = ['Log_ID', 'Timestamp', 'Level', 'Module', 'Message', 'Details'];
-          break;
-        case 'Template_RKKAL':
-          headers = ['Template_ID', 'School_ID', 'Template_JSON', 'Last_Updated', 'Status'];
-          break;
-      }
-      
+      const headers = SCHEMA[sheetName] || ['ID','Data','Timestamp'];
       sheet.appendRow(headers);
+      _styleHeader(sheet, headers.length);
       return true;
-      
-    } catch (error) {
-      Logger.log('Create sheet error: ' + error.message);
+    } catch(e) {
+      Logger.log('SelfHealing.createSheet ERROR: '+e.message);
       return false;
     }
   },
-  
-  /**
-   * Check if required columns exist in sheet
-   */
-  checkColumns: function(sheetName, requiredColumns) {
+
+  checkColumns: function(sheetName, requiredCols) {
     try {
       const ss = Database.getDatabase();
+      if (!ss) return false;
       const sheet = ss.getSheetByName(sheetName);
       if (!sheet) return false;
-      
-      const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-      
-      return requiredColumns.every(function(col) {
-        return headers.includes(col);
-      });
-      
-    } catch (error) {
-      Logger.log('Check columns error: ' + error.message);
+      const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0];
+      return requiredCols.every(c => headers.includes(c));
+    } catch(e) {
       return false;
     }
+  },
+
+  // ── Diagnose semua sheet ─────────────────────────────────
+  diagnose: function() {
+    try {
+      const ss = Database.getDatabase();
+      if (!ss) return { ok:false, error:'Database tidak ada' };
+
+      const report = {};
+      Object.keys(SCHEMA).forEach(name => {
+        const sheet = ss.getSheetByName(name);
+        report[name] = {
+          exists   : !!sheet,
+          rows     : sheet ? Math.max(sheet.getLastRow()-1, 0) : 0,
+          cols     : sheet ? sheet.getLastColumn() : 0,
+          schema_ok: sheet ? this.checkColumns(name, SCHEMA[name].slice(0,3)) : false
+        };
+      });
+
+      return { ok:true, sheets: report, timestamp: new Date().toISOString() };
+    } catch(e) {
+      return { ok:false, error: e.message };
+    }
+  },
+
+  // ── Scheduled trigger (setiap 1 jam) ────────────────────
+  scheduledCheck: function() {
+    Logger.log('SelfHealing scheduled check dimulai...');
+    const result = this.checkAndHeal();
+    Database.logEvent('INFO','SelfHealing', result ? 'Scheduled check OK' : 'Check dengan perbaikan', '', '');
   }
 };

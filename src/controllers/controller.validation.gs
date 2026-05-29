@@ -1,105 +1,108 @@
 /**
- * Controller: Validation Module
- * Verify transactions and check budget limits
+ * ============================================================
+ * CONTROLLER VALIDATION - Verifikasi Transaksi & Budget Guard
+ * Fase 2: Validasi terhadap pagu RKKAL + workflow approval
+ * ============================================================
  */
 
+var Controller = (typeof Controller !== 'undefined' && Controller) ? Controller : {};
+
 Controller.Validation = {
-  /**
-   * Verify transaction validity
-   */
+
   verify: function(params) {
     try {
-      const transactionId = params.transactionId;
-      const action = params.action || 'verify'; // verify, reject, approve
-      
-      // Get transaction from database
-      const transaction = Database.getTransactionById(transactionId);
-      
-      if (!transaction) {
+      const trxId  = params.transactionId || params.trxId;
+      const action = params.action || 'verify'; // verify | approve | reject
+
+      if (!trxId) {
+        return Response.json({ status:'error', message:'ID Transaksi wajib diisi' });
+      }
+
+      const trx = Database.getTransactionById(trxId);
+      if (!trx) {
+        return Response.json({ status:'error', message:'Transaksi tidak ditemukan: '+trxId });
+      }
+
+      // ── Budget validation ─────────────────────────────
+      const budgetCheck = this.validateBudget(trx);
+      if (!budgetCheck.valid) {
         return Response.json({
-          status: 'error',
-          message: 'Transaksi tidak ditemukan'
+          status : 'error',
+          message: budgetCheck.message,
+          data   : budgetCheck
         });
       }
-      
-      // Validate budget limits
-      const isValid = this.validateBudget(transaction);
-      
-      if (!isValid) {
-        return Response.json({
-          status: 'error',
-          message: 'Melebihi anggaran yang tersedia'
-        });
+
+      // ── Update status ─────────────────────────────────
+      const newStatus = action === 'approve' ? 'verified'
+                      : action === 'reject'  ? 'rejected'
+                      : 'pending_review';
+
+      const updated = Database.updateTransactionStatus(trxId, newStatus);
+      if (!updated) {
+        return Response.json({ status:'error', message:'Gagal memperbarui status transaksi' });
       }
-      
-      // Update status
-      const updated = Database.updateTransactionStatus(
-        transactionId, 
-        action === 'approve' ? 'verified' : 'rejected'
-      );
-      
-      if (updated) {
-        return Response.json({
-          status: 'success',
-          message: 'Transaksi ' + action + 'd',
-          data: transaction
-        });
-      }
-      
+
+      // ── Notify via Telegram ───────────────────────────
+      TelegramBot.sendStatusNotif(trx, newStatus);
+
+      Database.logEvent('INFO','Validation',`Transaksi ${trxId} → ${newStatus}`,'',trx['School_ID']);
+
       return Response.json({
-        status: 'error',
-        message: 'Gagal memperbarui status'
+        status : 'success',
+        message: `Transaksi berhasil di-${action}`,
+        data   : { id_transaksi:trxId, new_status:newStatus, budget_info: budgetCheck }
       });
-      
-    } catch (error) {
-      Logger.log('Validation Error: ' + error.message);
-      return Response.json({
-        status: 'error',
-        message: 'Sistem error',
-        logId: 'VALID_' + Date.now()
-      });
+
+    } catch(err) {
+      Logger.log('Validation.verify ERROR: '+err.message);
+      return Response.json({ status:'error', message:'Sistem error', logId:'VALID_'+Date.now() });
     }
   },
-  
-  /**
-   * Validate transaction against budget
-   */
-  validateBudget: function(transaction) {
+
+  // ── Budget validation against RKKAL ──────────────────────
+  validateBudget: function(trx) {
     try {
-      const kodeAnggaran = transaction.kode_anggaran;
-      const jumlah = transaction.jumlah_rupiah;
-      const schoolId = transaction.school_id;
-      
-      // Get budget limit for this kode anggaran
-      const budgetLimit = this.getBudgetLimit(kodeAnggaran, schoolId);
-      
-      // Get already spent amount
-      const spent = this.getSpentAmount(kodeAnggaran, schoolId);
-      
-      // Check if transaction fits within budget
-      return (spent + jumlah) <= budgetLimit;
-      
-    } catch (error) {
-      Logger.log('Budget validation error: ' + error.message);
-      return true; // Allow if validation fails (fallback)
+      const kode    = trx['Kode_Anggaran'] || '';
+      const jumlah  = parseFloat(trx['Jumlah_Rupiah']) || 0;
+      const schoolId= trx['School_ID'] || '';
+      const tahun   = parseInt(trx['Tahun_Anggaran']) || new Date().getFullYear();
+
+      // Find matching RKKAL row
+      const rkkalRows = Database.findBy(DB_CONFIG.SHEETS.RKKAL, 'School_ID', schoolId)
+                                .filter(r => r['Kode_Akun'] === kode && r['Tahun_Anggaran'] == tahun);
+
+      if (rkkalRows.length === 0) {
+        // No RKKAL found → allow with warning
+        return { valid:true, message:'RKKAL tidak ditemukan, transaksi diizinkan dengan catatan',
+                 pagu:0, terpakai:0, sisa:0, has_rkkal:false };
+      }
+
+      const rkkal = rkkalRows[0];
+      const pagu  = parseFloat(rkkal['Pagu_Anggaran']) || 0;
+      const totalReal = parseFloat(rkkal['Total_Realisasi']) || 0;
+      const sisa  = pagu - totalReal;
+
+      if (jumlah > sisa) {
+        return {
+          valid  : false,
+          message: `Melebihi sisa anggaran. Sisa: Rp ${sisa.toLocaleString('id-ID')}`,
+          pagu   : pagu, terpakai: totalReal, sisa: sisa, has_rkkal: true
+        };
+      }
+
+      return {
+        valid  : true,
+        message: 'Transaksi dalam batas anggaran',
+        pagu   : pagu, terpakai: totalReal, sisa: sisa - jumlah, has_rkkal: true
+      };
+
+    } catch(err) {
+      Logger.log('validateBudget ERROR: '+err.message);
+      return { valid:true, message:'Validasi budget gagal (fallback allow)', pagu:0, terpakai:0, sisa:0 };
     }
   },
-  
-  /**
-   * Get budget limit for kode anggaran
-   */
-  getBudgetLimit: function(kodeAnggaran, schoolId) {
-    // This would fetch from RKKAL data
-    // Simplified for now - return placeholder value
-    return 1000000000; // 1 billion default limit
-  },
-  
-  /**
-   * Get already spent amount for kode anggaran
-   */
-  getSpentAmount: function(kodeAnggaran, schoolId) {
-    // This would calculate from existing transactions
-    // Simplified for now - return placeholder value
-    return 0;
-  }
+
+  getBudgetLimit : function(kode, schoolId) { return 1000000000; },
+  getSpentAmount : function(kode, schoolId) { return 0; }
 };

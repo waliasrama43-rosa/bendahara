@@ -196,7 +196,7 @@ async function loadTransactions(page, search) {
       +'<td>'+escHtml(t['Bulan_Pelaksanaan']||t.bulan_pelaksanaan||'-')+'</td>'
       +'<td class="td-right" style="font-weight:700;color:var(--primary)">'+formatRp(jumlah)+'</td>'
       +'<td class="td-center"><span class="badge '+badgeCls+'">'+status+'</span></td>'
-      +'<td class="td-center"><button class="btn btn-sm btn-outline" onclick="verifyTrx(\''+escHtml(t['ID_Transaksi']||t.id_transaksi||'')+'\')" title="Verifikasi">✅</button></td>'
+      +'<td class="td-center"><button class="btn btn-sm btn-outline" onclick="verifyTrx(\\''+escHtml(t['ID_Transaksi']||t.id_transaksi||'')+'\\')" title="Verifikasi">✅</button></td>'
       +'</tr>';
   }).join('');
   const pg = r.data.pagination||r.pagination||{};
@@ -557,7 +557,7 @@ async function loadRAB(){
       '<td class="td-right" style="color:var(--secondary);font-weight:700">'+formatRp(it.Total_Alokasi)+'</td>'+
       '<td class="td-right" style="color:'+(sel<0?'var(--danger)':'var(--text2)')+'">'+formatRp(sel)+'</td>'+
       '<td><span class="badge '+badge+'">'+st+'</span></td>'+
-      '<td><button class="btn btn-sm btn-outline" onclick="editRAB(\''+escHtml(it.RAB_ID)+'\')">✏️</button></td>'+
+      '<td><button class="btn btn-sm btn-outline" onclick="editRAB(\\''+escHtml(it.RAB_ID)+'\\')">✏️</button></td>'+
       '</tr>';
   }).join('');
 }
@@ -573,7 +573,7 @@ function editRAB(rabId){
   body+='</div>';
   openModal('✏️ Edit Alokasi Bulanan', body,
     '<button class="btn btn-secondary" onclick="closeModal()">Batal</button>'+
-    '<button class="btn btn-primary" onclick="saveRABAlloc(\''+rabId+'\')">💾 Simpan</button>');
+    '<button class="btn btn-primary" onclick="saveRABAlloc(\\''+rabId+'\\')">💾 Simpan</button>');
 }
 async function saveRABAlloc(rabId){
   var B=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];

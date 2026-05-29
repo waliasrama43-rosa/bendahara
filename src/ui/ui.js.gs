@@ -24,7 +24,7 @@ function showPage(page) {
   APP.currentPage = page;
   const titles = {
     dashboard:'Dashboard',input:'Input Data SPJ',data:'Lihat Transaksi',
-    rkkal:'Upload RKKAL',realisasi:'Realisasi Anggaran',
+    rkkal:'Input / Upload RKKAL',rab:'RAB Bulanan',realisasi:'Realisasi Anggaran',
     export:'Export Laporan',sekolah:'Daftar Sekolah',pengaturan:'Pengaturan'
   };
   document.getElementById('topbarTitle').textContent = titles[page]||page;
@@ -32,6 +32,8 @@ function showPage(page) {
   if (page==='dashboard') loadDashboard();
   if (page==='data') loadTransactions();
   if (page==='realisasi') loadRealisasi();
+  if (page==='rab') loadRAB();
+  if (page==='rkkal') initManualRkkalOnce();
 }
 
 // ── Sidebar ────────────────────────────────────────────────
@@ -425,6 +427,170 @@ async function diagnose() {
 // ── Helpers ────────────────────────────────────────────────
 function escHtml(s){
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ══════════ FASE 5: RKKAL Manual + Paste Excel ══════════
+var _rkkalRowSeq = 0;
+function initManualRkkalOnce(){
+  var body = document.getElementById('manualRkkalBody');
+  if(body && body.children.length===0){ addRkkalRow(); addRkkalRow(); }
+}
+function switchRkkalTab(tab, btn){
+  ['manual','paste','upload'].forEach(function(t){
+    var el=document.getElementById('rtab-'+t); if(el) el.classList.remove('active');
+  });
+  document.getElementById('rtab-'+tab).classList.add('active');
+  btn.parentElement.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+}
+function getSchoolForRkkal(){
+  var el=document.getElementById('rkkalSchoolId');
+  return (el&&el.value)||APP.schoolId;
+}
+function addRkkalRow(){
+  _rkkalRowSeq++;
+  var id=_rkkalRowSeq;
+  var tr=document.createElement('tr');
+  tr.id='rkrow-'+id;
+  tr.innerHTML=
+    '<td><input class="form-control" style="padding:6px 8px" data-f="kode" placeholder="521111"></td>'+
+    '<td><input class="form-control" style="padding:6px 8px" data-f="uraian" placeholder="Belanja ATK"></td>'+
+    '<td><input class="form-control" style="padding:6px 8px;width:70px" data-f="volume" type="number" oninput="calcRkkalRow('+id+')"></td>'+
+    '<td><input class="form-control" style="padding:6px 8px;width:70px" data-f="satuan" placeholder="PKT"></td>'+
+    '<td><input class="form-control" style="padding:6px 8px" data-f="harga" type="number" oninput="calcRkkalRow('+id+')"></td>'+
+    '<td><span data-f="pagu" style="font-weight:700;color:var(--primary)">Rp 0</span></td>'+
+    '<td><button class="btn btn-sm btn-outline" onclick="var e=document.getElementById(\'rkrow-'+id+'\');e.parentNode.removeChild(e)">🗑️</button></td>';
+  document.getElementById('manualRkkalBody').appendChild(tr);
+}
+function calcRkkalRow(id){
+  var tr=document.getElementById('rkrow-'+id);
+  var vol=parseFloat(tr.querySelector('[data-f=volume]').value)||0;
+  var harga=parseFloat(tr.querySelector('[data-f=harga]').value)||0;
+  tr.querySelector('[data-f=pagu]').textContent=formatRp(vol*harga);
+}
+async function saveManualRkkal(){
+  var rows=[];
+  document.querySelectorAll('#manualRkkalBody tr').forEach(function(tr){
+    var kode=tr.querySelector('[data-f=kode]').value.trim();
+    var uraian=tr.querySelector('[data-f=uraian]').value.trim();
+    if(!kode && !uraian) return;
+    rows.push({kode:kode,uraian:uraian,
+      volume:tr.querySelector('[data-f=volume]').value,
+      satuan:tr.querySelector('[data-f=satuan]').value,
+      harga:tr.querySelector('[data-f=harga]').value,pagu:''});
+  });
+  if(!rows.length){ toast('warning','Kosong','Isi minimal 1 baris'); return; }
+  showLoading('Menyimpan RKKAL...');
+  var r=await api('input_rkkal_manual',{items:JSON.stringify(rows),schoolId:getSchoolForRkkal(),
+    tahunAnggaran:document.getElementById('rkkalTahun').value},'POST');
+  hideLoading();
+  var box=document.getElementById('manualRkkalResult');
+  if(r.status==='success'){ box.innerHTML='<div class="alert alert-success"><span class="alert-icon">✅</span><div>'+r.message+'</div></div>'; toast('success','Tersimpan',r.message); }
+  else box.innerHTML='<div class="alert alert-error"><span class="alert-icon">❌</span><div>'+(r.message||'Gagal')+'</div></div>';
+}
+async function previewPaste(){
+  var text=document.getElementById('pasteArea').value;
+  if(!text.trim()){ toast('warning','Kosong','Tempel data dulu'); return; }
+  var r=await api('parse_rkkal',{rawText:text},'POST');
+  var box=document.getElementById('pasteResult');
+  if(r.status==='success' && r.data){
+    window._parsedRows=r.data.rows;
+    var h='<div class="alert alert-info"><span class="alert-icon">👁️</span><div>'+r.message+'</div></div>';
+    h+='<div class="table-wrapper"><table><thead><tr><th>Kode</th><th>Uraian</th><th>Vol</th><th>Sat</th><th>Harga</th><th>Pagu</th></tr></thead><tbody>';
+    r.data.rows.slice(0,20).forEach(function(x){
+      h+='<tr><td>'+escHtml(x.kode)+'</td><td>'+escHtml(x.uraian)+'</td><td>'+escHtml(x.volume)+'</td><td>'+escHtml(x.satuan)+'</td><td>'+escHtml(x.harga)+'</td><td>'+escHtml(x.pagu)+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    box.innerHTML=h;
+    document.getElementById('savePasteBtn').style.display='inline-flex';
+  } else box.innerHTML='<div class="alert alert-error"><span class="alert-icon">❌</span><div>'+(r.message||'Gagal')+'</div></div>';
+}
+async function saveParsedRkkal(){
+  if(!window._parsedRows||!window._parsedRows.length){ toast('warning','Kosong','Pratinjau dulu'); return; }
+  showLoading('Menyimpan...');
+  var r=await api('input_rkkal_manual',{items:JSON.stringify(window._parsedRows),schoolId:getSchoolForRkkal(),
+    tahunAnggaran:document.getElementById('rkkalTahun').value},'POST');
+  hideLoading();
+  if(r.status==='success'){ toast('success','Tersimpan',r.message); document.getElementById('pasteResult').innerHTML='<div class="alert alert-success"><span class="alert-icon">✅</span><div>'+r.message+'</div></div>'; }
+  else toast('error','Gagal',r.message||'');
+}
+
+// ══════════ FASE 5: RAB Bulanan ══════════
+async function generateRAB(){
+  var tahun=document.getElementById('rabTahun').value;
+  var mode=document.getElementById('rabMode').value;
+  showLoading('Membuat RAB...');
+  var r=await api('generate_rab',{tahun:tahun,mode:mode},'POST');
+  hideLoading();
+  if(r.status==='success'){ toast('success','RAB Dibuat',r.message); loadRAB(); }
+  else toast('warning','Info',r.message||'Gagal');
+}
+function rabStatCard(cls,icon,label,val){
+  return '<div class="stat-card '+cls+'"><div class="stat-icon">'+icon+'</div><div class="stat-info"><div class="stat-label">'+label+'</div><div class="stat-value" style="font-size:1.05rem">'+val+'</div></div></div>';
+}
+async function loadRAB(){
+  var tbody=document.getElementById('rabBody'); if(!tbody) return;
+  var tahun=document.getElementById('rabTahun').value;
+  tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:20px"><div class="spinner" style="margin:0 auto"></div></td></tr>';
+  var r=await api('get_rab',{tahun:tahun});
+  var stats=document.getElementById('rabStats');
+  if(!r.success||!r.data||!r.data.items.length){
+    tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">Belum ada RAB. Klik "Generate RAB".</td></tr>';
+    if(stats) stats.innerHTML=''; return;
+  }
+  var s=r.data.summary;
+  if(stats) stats.innerHTML=
+    rabStatCard('blue','📋','Total Item',s.total_item)+
+    rabStatCard('green','💰','Total Pagu',s.formatted_pagu)+
+    rabStatCard('teal','📅','Total Alokasi',s.formatted_alok)+
+    rabStatCard('orange','✅','Disetujui',s.approved+' / '+s.total_item);
+  window._rabItems=r.data.items;
+  tbody.innerHTML=r.data.items.map(function(it){
+    var sel=parseFloat(it.Selisih_Pagu)||0;
+    var st=(it.Status_RAB||'draft');
+    var badge=st==='approved'?'badge-verified':'badge-pending';
+    return '<tr>'+
+      '<td><span style="font-size:.75rem;background:var(--primary-light);color:var(--primary);padding:2px 7px;border-radius:4px">'+escHtml(it.Kode_Akun)+'</span></td>'+
+      '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(it.Uraian)+'</td>'+
+      '<td class="td-right" style="font-weight:700">'+formatRp(it.Pagu_Tahunan)+'</td>'+
+      '<td class="td-right" style="color:var(--secondary);font-weight:700">'+formatRp(it.Total_Alokasi)+'</td>'+
+      '<td class="td-right" style="color:'+(sel<0?'var(--danger)':'var(--text2)')+'">'+formatRp(sel)+'</td>'+
+      '<td><span class="badge '+badge+'">'+st+'</span></td>'+
+      '<td><button class="btn btn-sm btn-outline" onclick="editRAB(\''+escHtml(it.RAB_ID)+'\')">✏️</button></td>'+
+      '</tr>';
+  }).join('');
+}
+function editRAB(rabId){
+  var it=(window._rabItems||[]).find(function(x){return x.RAB_ID===rabId;});
+  if(!it) return;
+  var B=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  var body='<p style="font-size:.85rem;margin-bottom:10px"><b>'+escHtml(it.Kode_Akun)+'</b> — '+escHtml(it.Uraian)+'<br>Pagu Tahunan: <b>'+formatRp(it.Pagu_Tahunan)+'</b></p>';
+  body+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">';
+  B.forEach(function(b){
+    body+='<div class="form-group" style="margin:0"><label class="form-label" style="font-size:.72rem">'+b+'</label><input class="form-control" style="padding:6px 8px" type="number" id="alok_'+b+'" value="'+(parseFloat(it['Alokasi_'+b])||0)+'"></div>';
+  });
+  body+='</div>';
+  openModal('✏️ Edit Alokasi Bulanan', body,
+    '<button class="btn btn-secondary" onclick="closeModal()">Batal</button>'+
+    '<button class="btn btn-primary" onclick="saveRABAlloc(\''+rabId+'\')">💾 Simpan</button>');
+}
+async function saveRABAlloc(rabId){
+  var B=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  var p={rabId:rabId};
+  B.forEach(function(b){ p['alokasi_'+b.toLowerCase()]=document.getElementById('alok_'+b).value||0; });
+  showLoading('Menyimpan alokasi...');
+  var r=await api('update_rab',p,'POST');
+  hideLoading(); closeModal();
+  if(r.status==='success'){ toast('success','Tersimpan',(r.data&&r.data.warning)?r.data.warning:r.message); loadRAB(); }
+  else toast('error','Gagal',r.message||'');
+}
+async function approveRAB(){
+  if(!confirm('Setujui semua RAB tahun ini? Setelah disetujui, alokasi tidak bisa diubah.')) return;
+  showLoading('Menyetujui RAB...');
+  var r=await api('approve_rab',{tahun:document.getElementById('rabTahun').value,approvedBy:'Kepala Sekolah'},'POST');
+  hideLoading();
+  if(r.status==='success'){ toast('success','Disetujui',r.message); loadRAB(); }
+  else toast('error','Gagal',r.message||'');
 }
 
 // ── Init ──────────────────────────────────────────────────

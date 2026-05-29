@@ -15,6 +15,7 @@ const DB_CONFIG = {
     LOGS         : 'System_Logs',
     TEMPLATES    : 'Template_RKKAL',
     RKKAL        : 'Data_RKKAL',
+    RAB          : 'RAB_Bulanan',
     REALISASI    : 'Data_Realisasi',
     NOTIFICATIONS: 'Notifikasi'
   }
@@ -54,6 +55,15 @@ const SCHEMA = {
     'Realisasi_Mei','Realisasi_Jun','Realisasi_Jul','Realisasi_Agu',
     'Realisasi_Sep','Realisasi_Okt','Realisasi_Nov','Realisasi_Des',
     'Total_Realisasi','Sisa_Anggaran','Persen_Realisasi'
+  ],
+  RAB_Bulanan: [
+    'RAB_ID','School_ID','RKKAL_ID','Tahun_Anggaran','Kode_Akun','Uraian',
+    'Pagu_Tahunan',
+    'Alokasi_Jan','Alokasi_Feb','Alokasi_Mar','Alokasi_Apr',
+    'Alokasi_Mei','Alokasi_Jun','Alokasi_Jul','Alokasi_Agu',
+    'Alokasi_Sep','Alokasi_Okt','Alokasi_Nov','Alokasi_Des',
+    'Total_Alokasi','Selisih_Pagu','Status_RAB','Approved_By',
+    'Approved_Date','Timestamp','Catatan'
   ],
   Data_Realisasi: [
     'Realisasi_ID','School_ID','RKKAL_ID','Kode_Anggaran',

@@ -60,7 +60,15 @@ function _route(e) {
 
       // ── Data Operations ─────────────────────────────
       case 'upload_rkkal':   return Controller.RKKAL.Upload.process(p);
+      case 'input_rkkal_manual': return Controller.RKKAL.inputManual(p);
+      case 'parse_rkkal':    return Controller.RKKAL.parseFlexible(p);
       case 'input_data':     return Controller.Input.process(p);
+
+      // ── RAB (Rencana Anggaran Belanja per bulan) ────
+      case 'generate_rab':   return Controller.RAB.generate(p);
+      case 'get_rab':        return Controller.RAB.list(p);
+      case 'update_rab':     return Controller.RAB.updateAllocation(p);
+      case 'approve_rab':    return Controller.RAB.approve(p);
       case 'export_excel':   return Controller.Export.process(p);
       case 'export_spj':     return Controller.Export.process(Object.assign(p,{format:'spj'}));
       case 'export_realisasi':return Controller.Export.process(Object.assign(p,{format:'realisasi'}));

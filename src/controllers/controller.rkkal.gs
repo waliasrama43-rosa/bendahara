@@ -198,3 +198,104 @@ function validateRKKALRow(row) {
 function generateTransactionId() {
   return 'TRX-'+Date.now()+'-'+Math.random().toString(36).substr(2,9).toUpperCase();
 }
+
+
+// ============================================================
+// FASE 5: Input RKKAL Fleksibel (manual & paste Excel)
+// ============================================================
+
+/**
+ * inputManual - simpan item RKKAL dari form manual.
+ * Mendukung 1 item (params langsung) atau banyak (params.items = JSON array).
+ */
+Controller.RKKAL.inputManual = function(params) {
+  try {
+    const schoolId = params.schoolId || '';
+    const tahun    = parseInt(params.tahunAnggaran || params.tahun) || new Date().getFullYear();
+    if (!schoolId) return Response.json({ status:'error', message:'School ID wajib diisi' });
+
+    let items = [];
+    if (params.items) {
+      try { items = JSON.parse(params.items); } catch(e) { items = []; }
+    } else {
+      items = [{
+        kode  : params.kode || params.kodeAkun || '',
+        uraian: params.uraian || '',
+        volume: params.volume || 0,
+        satuan: params.satuan || '',
+        harga : params.harga || params.hargaSatuan || 0,
+        pagu  : params.pagu || params.paguAnggaran || 0
+      }];
+    }
+
+    const rows = items
+      .filter(it => (it.kode||'').toString().trim() || (it.uraian||'').toString().trim())
+      .map((it, i) => Controller.RKKAL._manualRow(it, schoolId, tahun, i));
+
+    if (!rows.length) return Response.json({ status:'error', message:'Tidak ada data valid untuk disimpan' });
+
+    const inserted = Database.insertBatch(DB_CONFIG.SHEETS.RKKAL, rows);
+    Database.logEvent('INFO','RKKAL.inputManual', inserted+' item RKKAL diinput manual','',schoolId);
+
+    return Response.json({
+      status:'success',
+      message: inserted+' item RKKAL berhasil disimpan',
+      data:{ rows_inserted: inserted }
+    });
+  } catch(err) {
+    Logger.log('RKKAL.inputManual ERROR: '+err.message);
+    return Response.json({ status:'error', message:'Gagal menyimpan: '+err.message });
+  }
+};
+
+Controller.RKKAL._manualRow = function(it, schoolId, tahun, idx) {
+  const clean = function(v){ return parseFloat((v||'').toString().replace(/[^0-9.]/g,''))||0; };
+  const kode  = (it.kode||'').toString().trim();
+  const vol   = clean(it.volume);
+  const harga = clean(it.harga);
+  let pagu    = clean(it.pagu);
+  if (!pagu && vol && harga) pagu = vol * harga; // auto-hitung jika pagu kosong
+  return {
+    RKKAL_ID:'RKKAL-'+Date.now()+'-'+idx, School_ID:schoolId, Tahun_Anggaran:tahun,
+    Kode_Program: kode.length>=4?kode.substring(0,4):kode, Kode_Kegiatan:'', Kode_Komponen:'',
+    Kode_Akun:kode, Uraian:(it.uraian||'').toString().trim(),
+    Volume:vol, Satuan:(it.satuan||'').toString().trim(), Harga_Satuan:harga, Pagu_Anggaran:pagu,
+    Realisasi_Jan:0,Realisasi_Feb:0,Realisasi_Mar:0,Realisasi_Apr:0,Realisasi_Mei:0,Realisasi_Jun:0,
+    Realisasi_Jul:0,Realisasi_Agu:0,Realisasi_Sep:0,Realisasi_Okt:0,Realisasi_Nov:0,Realisasi_Des:0,
+    Total_Realisasi:0, Sisa_Anggaran:pagu, Persen_Realisasi:0
+  };
+};
+
+/**
+ * parseFlexible - parse teks tempelan dari Excel/CSV (auto-deteksi pemisah).
+ * Mengembalikan array objek utk preview SEBELUM disimpan (tidak langsung insert).
+ */
+Controller.RKKAL.parseFlexible = function(params) {
+  try {
+    const text = params.rawText || params.csvData || '';
+    if (!text.trim()) return Response.json({ status:'error', message:'Teks kosong' });
+
+    const lines = text.replace(/\r/g,'').split('\n').filter(l => l.trim());
+    // Deteksi pemisah: tab (paste Excel) > titik koma > koma
+    const sample = lines[0] || '';
+    const delim = sample.indexOf('\t')>=0 ? '\t' : (sample.indexOf(';')>=0 ? ';' : ',');
+
+    // Lewati baris header jika sel pertama bukan angka/kode
+    const preview = [];
+    lines.forEach((line, i) => {
+      const c = line.split(delim).map(x => x.trim().replace(/^"|"$/g,''));
+      if (i === 0 && !/\d/.test(c[0]||'')) return; // header
+      if (!c[0] && !c[1]) return;
+      preview.push({ kode:c[0]||'', uraian:c[1]||'', volume:c[2]||'',
+                     satuan:c[3]||'', harga:c[4]||'', pagu:c[5]||'' });
+    });
+
+    return Response.json({
+      status:'success',
+      message: preview.length+' baris terdeteksi (pemisah: '+(delim==='\t'?'TAB':delim)+')',
+      data:{ delimiter: delim==='\t'?'TAB':delim, rows: preview }
+    });
+  } catch(err) {
+    return Response.json({ status:'error', message:'Gagal parse: '+err.message });
+  }
+};

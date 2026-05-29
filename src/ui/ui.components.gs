@@ -42,7 +42,10 @@ ${_getGlobalCSS()}
     </div>
     <div class="nav-section-title" style="margin-top:8px">Anggaran</div>
     <div class="nav-item" onclick="showPage('rkkal')" id="nav-rkkal">
-      <span class="nav-icon">📁</span> Upload RKKAL
+      <span class="nav-icon">📁</span> Input / Upload RKKAL
+    </div>
+    <div class="nav-item" onclick="showPage('rab')" id="nav-rab">
+      <span class="nav-icon">📅</span> RAB Bulanan
     </div>
     <div class="nav-item" onclick="showPage('realisasi')" id="nav-realisasi">
       <span class="nav-icon">📈</span> Realisasi

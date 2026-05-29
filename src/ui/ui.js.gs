@@ -459,7 +459,8 @@ function addRkkalRow(){
     '<td><input class="form-control" style="padding:6px 8px;width:70px" data-f="satuan" placeholder="PKT"></td>'+
     '<td><input class="form-control" style="padding:6px 8px" data-f="harga" type="number" oninput="calcRkkalRow('+id+')"></td>'+
     '<td><span data-f="pagu" style="font-weight:700;color:var(--primary)">Rp 0</span></td>'+
-    '<td><button class="btn btn-sm btn-outline" onclick="var e=document.getElementById(\'rkrow-'+id+'\');e.parentNode.removeChild(e)">🗑️</button></td>';
+    '<td><button type="button" class="btn btn-sm btn-outline rk-del">🗑️</button></td>';
+  tr.querySelector('.rk-del').addEventListener('click', function(){ tr.parentNode.removeChild(tr); });
   document.getElementById('manualRkkalBody').appendChild(tr);
 }
 function calcRkkalRow(id){

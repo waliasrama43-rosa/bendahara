@@ -5,7 +5,8 @@
  * ============================================================
  */
 
-const Controller = (typeof Controller !== 'undefined') ? Controller : {};
+// Safe namespace init (order-independent, no TDZ) — pakai var, bukan const
+var Controller = (typeof Controller !== 'undefined' && Controller) ? Controller : {};
 
 Controller.RKKAL = {
   Upload: {

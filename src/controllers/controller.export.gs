@@ -5,6 +5,8 @@
  * ============================================================
  */
 
+var Controller = (typeof Controller !== 'undefined' && Controller) ? Controller : {};
+
 Controller.Export = {
 
   process: function(params) {

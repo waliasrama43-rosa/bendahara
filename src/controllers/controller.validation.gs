@@ -5,6 +5,8 @@
  * ============================================================
  */
 
+var Controller = (typeof Controller !== 'undefined' && Controller) ? Controller : {};
+
 Controller.Validation = {
 
   verify: function(params) {

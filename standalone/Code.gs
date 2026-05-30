@@ -135,7 +135,7 @@ var Database = {
   },
 
   headerToKey: function (header) {
-    return String(header).toLowerCase().replace(/\s+/g, '_');
+    return String(header).toLowerCase().split(' ').join('_');
   },
 
   insert: function (sheetName, data) {
@@ -358,7 +358,8 @@ function _genTrxId() {
 }
 function _parseRupiah(val) {
   if (typeof val === 'number') return Math.round(val);
-  var cleaned = String(val == null ? '' : val).replace(/[^0-9]/g, '');
+  var s = String(val == null ? '' : val), cleaned = '';
+  for (var i = 0; i < s.length; i++) { var ch = s.charAt(i); if (ch >= '0' && ch <= '9') cleaned += ch; }
   return parseInt(cleaned, 10) || 0;
 }
 function _splitCsvLine(line) {
@@ -451,7 +452,7 @@ function apiUploadCSV(payload) {
     var schoolId = _resolveSchoolId(payload);
     var csv = String(payload.csv || '').trim();
     if (!csv) return { ok: false, error: 'Data CSV kosong.' };
-    var lines = csv.split(/\r?\n/);
+    var lines = csv.split('\r\n').join('\n').split('\r').join('\n').split('\n');
     var processed = 0, errors = 0, startIndex = 0;
     var first = _splitCsvLine(lines[0]).join(' ').toLowerCase();
     if (first.indexOf('kode') !== -1 || first.indexOf('nama') !== -1 || first.indexOf('jumlah') !== -1) startIndex = 1;

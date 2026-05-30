@@ -119,15 +119,17 @@ var REF = {
 
 function _akunNama(kode) {
   kode = String(kode || '').trim();
-  for (var i = 0; i < REF.KODE_AKUN.length; i++) {
-    if (REF.KODE_AKUN[i].kode === kode) return REF.KODE_AKUN[i].nama;
+  var list = _loadConfigAkun();
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].kode === kode) return list[i].nama;
   }
   return '';
 }
 function _kegiatanNama(kode) {
   kode = String(kode || '').trim().toUpperCase();
-  for (var i = 0; i < REF.KEGIATAN.length; i++) {
-    if (REF.KEGIATAN[i].kode === kode) return REF.KEGIATAN[i].nama;
+  var list = _loadConfigKegiatan();
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].kode === kode) return list[i].nama;
   }
   return '';
 }
@@ -167,7 +169,14 @@ var Database = {
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
       'Bendahara', 'Status_Aktif', 'Tanggal_Daftar', 'Plan_Type'
     ],
-    System_Logs: ['Log_ID', 'Timestamp', 'Level', 'Module', 'Message', 'Details']
+    System_Logs: ['Log_ID', 'Timestamp', 'Level', 'Module', 'Message', 'Details'],
+    Config_Users: ['Email', 'Role', 'Name', 'Status'],
+    Config_Akun: ['Kode', 'Nama', 'Aktif'],
+    Config_Kegiatan: ['Kode', 'Nama', 'Aktif'],
+    Config_Prefix: ['Kode', 'Nama', 'Aktif'],
+    Config_Export: ['TemplateName', 'Type', 'Columns', 'HeaderRow'],
+    Config_Import: ['TemplateName', 'Type', 'Mapping'],
+    Config_UI: ['Key', 'Value']
   },
 
   init: function () {
@@ -207,6 +216,39 @@ var Database = {
     var def = ss.getSheetByName('Sheet1');
     if (def && ss.getSheets().length > 1 && def.getLastRow() === 0) {
       try { ss.deleteSheet(def); } catch (e) {}
+    }
+    this._seedConfigSheets(ss);
+  },
+
+  _seedConfigSheets: function (ss) {
+    // Seed Config_Akun from REF.KODE_AKUN if empty
+    var sheetAkun = ss.getSheetByName('Config_Akun');
+    if (sheetAkun && sheetAkun.getLastRow() <= 1) {
+      for (var i = 0; i < REF.KODE_AKUN.length; i++) {
+        sheetAkun.appendRow([REF.KODE_AKUN[i].kode, REF.KODE_AKUN[i].nama, 'Y']);
+      }
+    }
+    // Seed Config_Kegiatan from REF.KEGIATAN if empty
+    var sheetKeg = ss.getSheetByName('Config_Kegiatan');
+    if (sheetKeg && sheetKeg.getLastRow() <= 1) {
+      for (var j = 0; j < REF.KEGIATAN.length; j++) {
+        sheetKeg.appendRow([REF.KEGIATAN[j].kode, REF.KEGIATAN[j].nama, 'Y']);
+      }
+    }
+    // Seed Config_Prefix from REF.MAK_PREFIX if empty
+    var sheetPfx = ss.getSheetByName('Config_Prefix');
+    if (sheetPfx && sheetPfx.getLastRow() <= 1) {
+      for (var k = 0; k < REF.MAK_PREFIX.length; k++) {
+        sheetPfx.appendRow([REF.MAK_PREFIX[k].kode, REF.MAK_PREFIX[k].nama, 'Y']);
+      }
+    }
+    // Seed script owner as Admin in Config_Users if empty
+    var sheetUsers = ss.getSheetByName('Config_Users');
+    if (sheetUsers && sheetUsers.getLastRow() <= 1) {
+      var ownerEmail = _getActiveUserEmail();
+      if (ownerEmail) {
+        sheetUsers.appendRow([ownerEmail, 'Admin', 'Owner', 'active']);
+      }
     }
   },
 
@@ -357,6 +399,144 @@ var Database = {
 };
 
 /* =========================================================================
+ *  AUTHENTICATION LAYER
+ * ========================================================================= */
+
+function _getActiveUserEmail() {
+  try {
+    var email = Session.getActiveUser().getEmail();
+    return email || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function _getUserRole(email) {
+  if (!email) return null;
+  try {
+    var rows = Database.readAll('Config_Users');
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].email).toLowerCase() === String(email).toLowerCase()) {
+        return {
+          email: rows[i].email,
+          role: rows[i].role || 'Viewer',
+          name: rows[i].name || '',
+          status: rows[i].status || 'active'
+        };
+      }
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function _requireAuth(requiredRole) {
+  var email = _getActiveUserEmail();
+  // Graceful: if Session returns empty (editor/dev mode), treat as admin
+  if (!email) {
+    return { email: 'dev@localhost', role: 'Admin', name: 'Developer Mode', status: 'active' };
+  }
+  var user = _getUserRole(email);
+  if (!user) {
+    // Unknown user - treat as guest with limited access
+    return { email: email, role: 'Guest', name: '', status: 'active' };
+  }
+  if (user.status !== 'active') {
+    throw new Error('Akun tidak aktif. Hubungi administrator.');
+  }
+  if (requiredRole === 'Admin' && user.role !== 'Admin') {
+    throw new Error('Akses ditolak. Hanya Admin yang bisa melakukan ini.');
+  }
+  return user;
+}
+
+function _withAuth(requiredRole, fn) {
+  try {
+    var user = _requireAuth(requiredRole);
+    return fn(user);
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+function apiGetCurrentUser() {
+  try {
+    var email = _getActiveUserEmail();
+    if (!email) {
+      return { ok: true, email: 'dev@localhost', role: 'Admin', name: 'Developer Mode' };
+    }
+    var user = _getUserRole(email);
+    if (user) {
+      return { ok: true, email: user.email, role: user.role, name: user.name };
+    }
+    return { ok: true, email: email, role: 'Guest', name: '' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  CONFIG SHEET CACHE (for _akunNama / _kegiatanNama)
+ * ========================================================================= */
+
+var _configCache = {
+  akun: null,
+  kegiatan: null,
+  prefix: null
+};
+
+function _loadConfigAkun() {
+  if (_configCache.akun) return _configCache.akun;
+  try {
+    var rows = Database.readAll('Config_Akun');
+    if (rows && rows.length > 0) {
+      _configCache.akun = rows.map(function (r) {
+        return { kode: String(r.kode || ''), nama: String(r.nama || ''), aktif: String(r.aktif || 'Y') };
+      });
+      return _configCache.akun;
+    }
+  } catch (e) {}
+  // Fallback to hardcoded REF
+  _configCache.akun = REF.KODE_AKUN.map(function (r) {
+    return { kode: r.kode, nama: r.nama, aktif: 'Y' };
+  });
+  return _configCache.akun;
+}
+
+function _loadConfigKegiatan() {
+  if (_configCache.kegiatan) return _configCache.kegiatan;
+  try {
+    var rows = Database.readAll('Config_Kegiatan');
+    if (rows && rows.length > 0) {
+      _configCache.kegiatan = rows.map(function (r) {
+        return { kode: String(r.kode || ''), nama: String(r.nama || ''), aktif: String(r.aktif || 'Y') };
+      });
+      return _configCache.kegiatan;
+    }
+  } catch (e) {}
+  _configCache.kegiatan = REF.KEGIATAN.map(function (r) {
+    return { kode: r.kode, nama: r.nama, aktif: 'Y' };
+  });
+  return _configCache.kegiatan;
+}
+
+function _loadConfigPrefix() {
+  if (_configCache.prefix) return _configCache.prefix;
+  try {
+    var rows = Database.readAll('Config_Prefix');
+    if (rows && rows.length > 0) {
+      _configCache.prefix = rows.map(function (r) {
+        return { kode: String(r.kode || ''), nama: String(r.nama || ''), aktif: String(r.aktif || 'Y') };
+      });
+      return _configCache.prefix;
+    }
+  } catch (e) {}
+  _configCache.prefix = REF.MAK_PREFIX.map(function (r) {
+    return { kode: r.kode, nama: r.nama, aktif: 'Y' };
+  });
+  return _configCache.prefix;
+}
+
+/* =========================================================================
  *  HELPERS
  * ========================================================================= */
 
@@ -475,7 +655,19 @@ function _terbilang(n) {
  * ========================================================================= */
 
 function apiGetRefs() {
-  return { ok: true, refs: REF };
+  var akun = _loadConfigAkun().filter(function (r) { return r.aktif === 'Y'; });
+  var kegiatan = _loadConfigKegiatan().filter(function (r) { return r.aktif === 'Y'; });
+  var prefix = _loadConfigPrefix().filter(function (r) { return r.aktif === 'Y'; });
+  var refs = {
+    KODE_AKUN: akun.map(function (r) { return { kode: r.kode, nama: r.nama }; }),
+    KEGIATAN: kegiatan.map(function (r) { return { kode: r.kode, nama: r.nama }; }),
+    MAK_PREFIX: prefix.map(function (r) { return { kode: r.kode, nama: r.nama }; }),
+    JENJANG: REF.JENJANG,
+    SATUAN: REF.SATUAN,
+    BULAN: REF.BULAN,
+    TAHUN: REF.TAHUN
+  };
+  return { ok: true, refs: refs };
 }
 
 function apiBootstrap() {
@@ -486,9 +678,23 @@ function apiBootstrap() {
     var schools = Database.readAll('Data_Sekolah').map(function (s) {
       return { schoolId: s.school_id, nama: s.nama_sekolah };
     });
+    var akun = _loadConfigAkun().filter(function (r) { return r.aktif === 'Y'; });
+    var kegiatan = _loadConfigKegiatan().filter(function (r) { return r.aktif === 'Y'; });
+    var prefix = _loadConfigPrefix().filter(function (r) { return r.aktif === 'Y'; });
+    var refs = {
+      KODE_AKUN: akun.map(function (r) { return { kode: r.kode, nama: r.nama }; }),
+      KEGIATAN: kegiatan.map(function (r) { return { kode: r.kode, nama: r.nama }; }),
+      MAK_PREFIX: prefix.map(function (r) { return { kode: r.kode, nama: r.nama }; }),
+      JENJANG: REF.JENJANG,
+      SATUAN: REF.SATUAN,
+      BULAN: REF.BULAN,
+      TAHUN: REF.TAHUN
+    };
+    var uiConfig = _readUIConfig();
     return {
       ok: true, schoolId: schoolId, schools: schools,
-      refs: REF,
+      refs: refs,
+      uiConfig: uiConfig,
       summary: _buildSummary(schoolId),
       spreadsheetUrl: Database.getSpreadsheetUrl(),
       serverTime: new Date().toISOString()
@@ -899,6 +1105,7 @@ function apiExportRekap(payload) {
     var tahun = payload.tahun ? String(payload.tahun) : '*';
     var bulan = payload.bulan ? String(payload.bulan) : '*';
     var jenjang = _normalizeJenjang(payload.jenjang);
+    var templateName = payload.templateName || '';
 
     var school = null;
     var schools = Database.readAll('Data_Sekolah');
@@ -916,16 +1123,31 @@ function apiExportRekap(payload) {
 
     function q(s) { return '"' + String(s == null ? '' : s).split('"').join('""') + '"'; }
 
+    // Check for custom export template
+    var tpl = null;
+    if (templateName) {
+      var tplRows = Database.readAll('Config_Export');
+      for (var t = 0; t < tplRows.length; t++) {
+        if (String(tplRows[t].templatename || '').trim() === templateName) {
+          tpl = tplRows[t]; break;
+        }
+      }
+    }
+
     var out = [];
-    out.push(q('REKAP SPJ - ' + (school ? school.nama_sekolah : 'Sekolah')));
-    out.push(q('Kepala Sekolah: ' + (school ? school.kepala_sekolah : '-') +
-      ' | Bendahara: ' + (school ? school.bendahara : '-')));
-    out.push(q('Tahun: ' + (tahun === '*' ? 'Semua' : tahun) +
-      ' | Bulan: ' + (bulan === '*' ? 'Semua' : bulan) +
-      ' | Jenjang: ' + (jenjang || 'Semua')));
-    out.push('');
-    out.push(['NO', 'TANGGAL', 'NAMA TOKO', 'URAIAN MAK (Akun belanja)', 'URAIAN PEMBAYARAN',
-      'TAHUN ANGGARAN', 'BULAN PELAKSANAAN', 'JENJANG', 'JUMLAH', 'TERBILANG', 'STATUS', 'BUKTI'].map(q).join(','));
+    if (tpl && tpl.headerrow) {
+      out.push(tpl.headerrow);
+    } else {
+      out.push(q('REKAP SPJ - ' + (school ? school.nama_sekolah : 'Sekolah')));
+      out.push(q('Kepala Sekolah: ' + (school ? school.kepala_sekolah : '-') +
+        ' | Bendahara: ' + (school ? school.bendahara : '-')));
+      out.push(q('Tahun: ' + (tahun === '*' ? 'Semua' : tahun) +
+        ' | Bulan: ' + (bulan === '*' ? 'Semua' : bulan) +
+        ' | Jenjang: ' + (jenjang || 'Semua')));
+      out.push('');
+      out.push(['NO', 'TANGGAL', 'NAMA TOKO', 'URAIAN MAK (Akun belanja)', 'URAIAN PEMBAYARAN',
+        'TAHUN ANGGARAN', 'BULAN PELAKSANAAN', 'JENJANG', 'JUMLAH', 'TERBILANG', 'STATUS', 'BUKTI'].map(q).join(','));
+    }
 
     var total = 0;
     rows.forEach(function (r, idx) {
@@ -956,6 +1178,7 @@ function apiExportRKKAL(payload) {
     var schoolId = _resolveSchoolId(payload);
     var tahun = payload.tahun ? String(payload.tahun) : '*';
     var jenjang = _normalizeJenjang(payload.jenjang);
+    var templateName = payload.templateName || '';
 
     var rows = Database.readAll('Data_RKKAL').filter(function (r) {
       if (schoolId && r.school_id && r.school_id !== schoolId) return false;
@@ -965,9 +1188,26 @@ function apiExportRKKAL(payload) {
     });
 
     function q(s) { return '"' + String(s == null ? '' : s).split('"').join('""') + '"'; }
+
+    // Check for custom export template
+    var tpl = null;
+    if (templateName) {
+      var tplRows = Database.readAll('Config_Export');
+      for (var t = 0; t < tplRows.length; t++) {
+        if (String(tplRows[t].templatename || '').trim() === templateName) {
+          tpl = tplRows[t]; break;
+        }
+      }
+    }
+
     var out = [];
-    out.push(['KODE_KEGIATAN', 'NAMA_KEGIATAN', 'KODE_AKUN', 'NAMA_AKUN', 'URAIAN',
-      'VOLUME', 'SATUAN', 'HARGA_SATUAN', 'JUMLAH_BIAYA', 'TAHUN', 'JENJANG'].map(q).join(','));
+    if (tpl && tpl.headerrow) {
+      out.push(tpl.headerrow);
+    } else {
+      out.push(['KODE_KEGIATAN', 'NAMA_KEGIATAN', 'KODE_AKUN', 'NAMA_AKUN', 'URAIAN',
+        'VOLUME', 'SATUAN', 'HARGA_SATUAN', 'JUMLAH_BIAYA', 'TAHUN', 'JENJANG'].map(q).join(','));
+    }
+
     var total = 0;
     rows.forEach(function (r) {
       total += Number(r.jumlah_biaya) || 0;
@@ -998,16 +1238,41 @@ function apiUploadRKKALCsv(payload) {
     var schoolId = _resolveSchoolId(payload);
     var tahun = payload.tahun || (new Date().getFullYear());
     var jenjang = _normalizeJenjang(payload.jenjang);
+    var templateName = payload.templateName || '';
     var csv = String(payload.csv || '').trim();
     if (!csv) return { ok: false, error: 'Data CSV kosong.' };
     var lines = csv.split('\r\n').join('\n').split('\r').join('\n').split('\n');
     var processed = 0, errors = 0, startIndex = 0;
     var first = _splitCsvLine(lines[0]).join(' ').toLowerCase();
     if (first.indexOf('kode') !== -1 || first.indexOf('akun') !== -1 || first.indexOf('uraian') !== -1) startIndex = 1;
+
+    // Load import template mapping if provided
+    var mapping = null;
+    if (templateName) {
+      var tplRows = Database.readAll('Config_Import');
+      for (var t = 0; t < tplRows.length; t++) {
+        if (String(tplRows[t].templatename || '').trim() === templateName) {
+          try { mapping = JSON.parse(tplRows[t].mapping || '{}'); } catch (e) {}
+          break;
+        }
+      }
+    }
+
     // Kolom: Kode_Kegiatan, Kode_Akun, Uraian, Volume, Satuan, Harga_Satuan, [Jumlah_Biaya]
     for (var i = startIndex; i < lines.length; i++) {
       if (!lines[i] || !lines[i].trim()) continue;
       var c = _splitCsvLine(lines[i]);
+
+      // Apply mapping if available (reorder columns based on mapping)
+      if (mapping && mapping.columns) {
+        var mapped = [];
+        for (var mc = 0; mc < mapping.columns.length; mc++) {
+          var colIdx = mapping.columns[mc];
+          mapped.push(c[colIdx] !== undefined ? c[colIdx] : '');
+        }
+        c = mapped;
+      }
+
       var keg = (c[0] || '').trim().toUpperCase();
       var akun = (c[1] || '').trim();
       var uraian = (c[2] || '').trim();
@@ -1034,16 +1299,41 @@ function apiUploadRekapCsv(payload) {
   try {
     payload = payload || {};
     var schoolId = _resolveSchoolId(payload);
+    var templateName = payload.templateName || '';
     var csv = String(payload.csv || '').trim();
     if (!csv) return { ok: false, error: 'Data CSV kosong.' };
     var lines = csv.split('\r\n').join('\n').split('\r').join('\n').split('\n');
     var processed = 0, errors = 0, startIndex = 0;
     var first = _splitCsvLine(lines[0]).join(' ').toLowerCase();
     if (first.indexOf('toko') !== -1 || first.indexOf('mak') !== -1 || first.indexOf('uraian') !== -1) startIndex = 1;
+
+    // Load import template mapping if provided
+    var mapping = null;
+    if (templateName) {
+      var tplRows = Database.readAll('Config_Import');
+      for (var t = 0; t < tplRows.length; t++) {
+        if (String(tplRows[t].templatename || '').trim() === templateName) {
+          try { mapping = JSON.parse(tplRows[t].mapping || '{}'); } catch (e) {}
+          break;
+        }
+      }
+    }
+
     // Kolom: Tanggal, Nama_Toko, Kode_MAK, Uraian_Pembayaran, Tahun, Bulan, Jumlah, [Jenjang]
     for (var i = startIndex; i < lines.length; i++) {
       if (!lines[i] || !lines[i].trim()) continue;
       var c = _splitCsvLine(lines[i]);
+
+      // Apply mapping if available
+      if (mapping && mapping.columns) {
+        var mapped = [];
+        for (var mc = 0; mc < mapping.columns.length; mc++) {
+          var colIdx = mapping.columns[mc];
+          mapped.push(c[colIdx] !== undefined ? c[colIdx] : '');
+        }
+        c = mapped;
+      }
+
       var tanggal = _normalizeTanggal(c[0]);
       var toko = (c[1] || '').trim();
       var kodeMak = (c[2] || '').trim();
@@ -1114,6 +1404,569 @@ function apiDiagnostics() {
       serverTime: new Date().toISOString()
     };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  USER MANAGEMENT APIs (Admin only)
+ * ========================================================================= */
+
+function apiGetUsers() {
+  return _withAuth('Admin', function () {
+    var rows = Database.readAll('Config_Users');
+    var users = rows.map(function (r) {
+      return { email: r.email, role: r.role, name: r.name, status: r.status };
+    });
+    return { ok: true, users: users };
+  });
+}
+
+function apiAddUser(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.email) return { ok: false, error: 'Email wajib diisi.' };
+    var sheet = Database.getSheet('Config_Users');
+    if (!sheet) return { ok: false, error: 'Sheet Config_Users tidak ditemukan.' };
+    // Check if user already exists
+    var existing = Database.readAll('Config_Users');
+    for (var i = 0; i < existing.length; i++) {
+      if (String(existing[i].email).toLowerCase() === String(payload.email).toLowerCase()) {
+        return { ok: false, error: 'User sudah terdaftar.' };
+      }
+    }
+    sheet.appendRow([
+      String(payload.email).trim(),
+      String(payload.role || 'Tendik').trim(),
+      String(payload.name || '').trim(),
+      'active'
+    ]);
+    return { ok: true };
+  });
+}
+
+function apiUpdateUser(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.email) return { ok: false, error: 'Email wajib diisi.' };
+    var sheet = Database.getSheet('Config_Users');
+    if (!sheet) return { ok: false, error: 'Sheet Config_Users tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var emailCol = headers.indexOf('Email');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][emailCol]).toLowerCase() === String(payload.email).toLowerCase()) {
+        var roleCol = headers.indexOf('Role');
+        var nameCol = headers.indexOf('Name');
+        var statusCol = headers.indexOf('Status');
+        if (payload.role !== undefined && roleCol !== -1) sheet.getRange(i + 1, roleCol + 1).setValue(payload.role);
+        if (payload.name !== undefined && nameCol !== -1) sheet.getRange(i + 1, nameCol + 1).setValue(payload.name);
+        if (payload.status !== undefined && statusCol !== -1) sheet.getRange(i + 1, statusCol + 1).setValue(payload.status);
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'User tidak ditemukan.' };
+  });
+}
+
+function apiDeleteUser(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.email) return { ok: false, error: 'Email wajib diisi.' };
+    var sheet = Database.getSheet('Config_Users');
+    if (!sheet) return { ok: false, error: 'Sheet Config_Users tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var emailCol = headers.indexOf('Email');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][emailCol]).toLowerCase() === String(payload.email).toLowerCase()) {
+        sheet.deleteRow(i + 1);
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'User tidak ditemukan.' };
+  });
+}
+
+/* =========================================================================
+ *  REFERENCE DATA CRUD APIs (Admin only)
+ * ========================================================================= */
+
+// --- Config_Akun ---
+function apiGetConfigAkun() {
+  try {
+    var rows = _loadConfigAkun();
+    return { ok: true, items: rows };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiAddConfigAkun(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Akun');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    sheet.appendRow([String(payload.kode).trim(), String(payload.nama || '').trim(), 'Y']);
+    _configCache.akun = null;
+    return { ok: true };
+  });
+}
+
+function apiUpdateConfigAkun(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Akun');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var kodeCol = headers.indexOf('Kode');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][kodeCol]).trim() === String(payload.kode).trim()) {
+        var namaCol = headers.indexOf('Nama');
+        var aktifCol = headers.indexOf('Aktif');
+        if (payload.nama !== undefined && namaCol !== -1) sheet.getRange(i + 1, namaCol + 1).setValue(payload.nama);
+        if (payload.aktif !== undefined && aktifCol !== -1) sheet.getRange(i + 1, aktifCol + 1).setValue(payload.aktif);
+        _configCache.akun = null;
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Kode tidak ditemukan.' };
+  });
+}
+
+function apiDeleteConfigAkun(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Akun');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var kodeCol = headers.indexOf('Kode');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][kodeCol]).trim() === String(payload.kode).trim()) {
+        sheet.deleteRow(i + 1);
+        _configCache.akun = null;
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Kode tidak ditemukan.' };
+  });
+}
+
+// --- Config_Kegiatan ---
+function apiGetConfigKegiatan() {
+  try {
+    var rows = _loadConfigKegiatan();
+    return { ok: true, items: rows };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiAddConfigKegiatan(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Kegiatan');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    sheet.appendRow([String(payload.kode).trim(), String(payload.nama || '').trim(), 'Y']);
+    _configCache.kegiatan = null;
+    return { ok: true };
+  });
+}
+
+function apiUpdateConfigKegiatan(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Kegiatan');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var kodeCol = headers.indexOf('Kode');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][kodeCol]).trim() === String(payload.kode).trim()) {
+        var namaCol = headers.indexOf('Nama');
+        var aktifCol = headers.indexOf('Aktif');
+        if (payload.nama !== undefined && namaCol !== -1) sheet.getRange(i + 1, namaCol + 1).setValue(payload.nama);
+        if (payload.aktif !== undefined && aktifCol !== -1) sheet.getRange(i + 1, aktifCol + 1).setValue(payload.aktif);
+        _configCache.kegiatan = null;
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Kode tidak ditemukan.' };
+  });
+}
+
+function apiDeleteConfigKegiatan(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Kegiatan');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var kodeCol = headers.indexOf('Kode');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][kodeCol]).trim() === String(payload.kode).trim()) {
+        sheet.deleteRow(i + 1);
+        _configCache.kegiatan = null;
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Kode tidak ditemukan.' };
+  });
+}
+
+// --- Config_Prefix ---
+function apiGetConfigPrefix() {
+  try {
+    var rows = _loadConfigPrefix();
+    return { ok: true, items: rows };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiAddConfigPrefix(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Prefix');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    sheet.appendRow([String(payload.kode).trim(), String(payload.nama || '').trim(), 'Y']);
+    _configCache.prefix = null;
+    return { ok: true };
+  });
+}
+
+function apiUpdateConfigPrefix(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Prefix');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var kodeCol = headers.indexOf('Kode');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][kodeCol]).trim() === String(payload.kode).trim()) {
+        var namaCol = headers.indexOf('Nama');
+        var aktifCol = headers.indexOf('Aktif');
+        if (payload.nama !== undefined && namaCol !== -1) sheet.getRange(i + 1, namaCol + 1).setValue(payload.nama);
+        if (payload.aktif !== undefined && aktifCol !== -1) sheet.getRange(i + 1, aktifCol + 1).setValue(payload.aktif);
+        _configCache.prefix = null;
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Kode tidak ditemukan.' };
+  });
+}
+
+function apiDeleteConfigPrefix(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.kode) return { ok: false, error: 'Kode wajib diisi.' };
+    var sheet = Database.getSheet('Config_Prefix');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var kodeCol = headers.indexOf('Kode');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][kodeCol]).trim() === String(payload.kode).trim()) {
+        sheet.deleteRow(i + 1);
+        _configCache.prefix = null;
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Kode tidak ditemukan.' };
+  });
+}
+
+/* =========================================================================
+ *  CHART DATA API
+ * ========================================================================= */
+
+function apiGetChartData(payload) {
+  try {
+    payload = payload || {};
+    var schoolId = payload.schoolId || '';
+    var tahun = payload.tahun ? String(payload.tahun) : '*';
+    var jenjang = _normalizeJenjang(payload.jenjang);
+
+    var rkkalData = Database.readAll('Data_RKKAL').filter(function (r) {
+      if (schoolId && r.school_id && r.school_id !== schoolId) return false;
+      if (tahun !== '*' && String(r.tahun_anggaran) !== tahun) return false;
+      if (jenjang && String(r.jenjang || '') !== jenjang) return false;
+      return true;
+    });
+
+    var rekapData = Database.readAll('Data_Rekap').filter(function (r) {
+      if (schoolId && r.school_id && r.school_id !== schoolId) return false;
+      if (tahun !== '*' && String(r.tahun_anggaran) !== tahun) return false;
+      if (jenjang && String(r.jenjang || '') !== jenjang) return false;
+      return true;
+    });
+
+    // (a) serapanPerKegiatan - proportion of spending per kegiatan
+    var kegMap = {};
+    rekapData.forEach(function (r) {
+      var keg = String(r.kode_kegiatan || '(?)');
+      if (!kegMap[keg]) kegMap[keg] = { kegiatan: keg, nama: _kegiatanNama(keg) || keg, realisasi: 0 };
+      kegMap[keg].realisasi += Number(r.jumlah) || 0;
+    });
+    var serapanPerKegiatan = Object.keys(kegMap).map(function (k) { return kegMap[k]; });
+
+    // (b) paguVsRealisasi - per kode akun
+    var akunMap = {};
+    rkkalData.forEach(function (r) {
+      var kode = String(r.kode_akun || '(?)');
+      if (!akunMap[kode]) akunMap[kode] = { kode: kode, nama: r.nama_akun || _akunNama(kode), pagu: 0, realisasi: 0 };
+      akunMap[kode].pagu += Number(r.jumlah_biaya) || 0;
+    });
+    rekapData.forEach(function (r) {
+      var kode = String(r.kode_akun || '(?)');
+      if (!akunMap[kode]) akunMap[kode] = { kode: kode, nama: r.nama_akun || _akunNama(kode), pagu: 0, realisasi: 0 };
+      akunMap[kode].realisasi += Number(r.jumlah) || 0;
+    });
+    var paguVsRealisasi = Object.keys(akunMap).map(function (k) { return akunMap[k]; });
+    paguVsRealisasi.sort(function (a, b) { return String(a.kode).localeCompare(String(b.kode)); });
+
+    // (c) trenBulanan - monthly spending trend for 12 months
+    var bulanMap = {};
+    for (var bi = 0; bi < REF.BULAN.length; bi++) {
+      bulanMap[REF.BULAN[bi]] = 0;
+    }
+    rekapData.forEach(function (r) {
+      var bln = String(r.bulan_pelaksanaan || '');
+      if (bulanMap[bln] !== undefined) {
+        bulanMap[bln] += Number(r.jumlah) || 0;
+      }
+    });
+    var trenBulanan = REF.BULAN.map(function (b) {
+      return { bulan: b, jumlah: bulanMap[b] || 0 };
+    });
+
+    return {
+      ok: true,
+      serapanPerKegiatan: serapanPerKegiatan,
+      paguVsRealisasi: paguVsRealisasi,
+      trenBulanan: trenBulanan
+    };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  EXPORT TEMPLATE APIs (Admin only)
+ * ========================================================================= */
+
+function apiGetExportTemplates() {
+  return _withAuth('Admin', function () {
+    var rows = Database.readAll('Config_Export');
+    var templates = rows.map(function (r) {
+      return {
+        name: r.templatename || '',
+        type: r.type || '',
+        columns: r.columns || '',
+        headerRow: r.headerrow || ''
+      };
+    });
+    return { ok: true, templates: templates };
+  });
+}
+
+function apiSaveExportTemplate(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.name) return { ok: false, error: 'Nama template wajib diisi.' };
+    var sheet = Database.getSheet('Config_Export');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var nameCol = headers.indexOf('TemplateName');
+    // Update if exists
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][nameCol]).trim() === String(payload.name).trim()) {
+        var typeCol = headers.indexOf('Type');
+        var colsCol = headers.indexOf('Columns');
+        var hdrCol = headers.indexOf('HeaderRow');
+        if (payload.type !== undefined && typeCol !== -1) sheet.getRange(i + 1, typeCol + 1).setValue(payload.type);
+        if (payload.columns !== undefined && colsCol !== -1) sheet.getRange(i + 1, colsCol + 1).setValue(payload.columns);
+        if (payload.headerRow !== undefined && hdrCol !== -1) sheet.getRange(i + 1, hdrCol + 1).setValue(payload.headerRow);
+        return { ok: true };
+      }
+    }
+    // Insert new
+    sheet.appendRow([
+      String(payload.name).trim(),
+      String(payload.type || '').trim(),
+      String(payload.columns || '').trim(),
+      String(payload.headerRow || '').trim()
+    ]);
+    return { ok: true };
+  });
+}
+
+function apiDeleteExportTemplate(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.name) return { ok: false, error: 'Nama template wajib diisi.' };
+    var sheet = Database.getSheet('Config_Export');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var nameCol = headers.indexOf('TemplateName');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][nameCol]).trim() === String(payload.name).trim()) {
+        sheet.deleteRow(i + 1);
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Template tidak ditemukan.' };
+  });
+}
+
+/* =========================================================================
+ *  IMPORT TEMPLATE APIs (Admin only)
+ * ========================================================================= */
+
+function apiGetImportTemplates() {
+  return _withAuth('Admin', function () {
+    var rows = Database.readAll('Config_Import');
+    var templates = rows.map(function (r) {
+      return {
+        name: r.templatename || '',
+        type: r.type || '',
+        mapping: r.mapping || ''
+      };
+    });
+    return { ok: true, templates: templates };
+  });
+}
+
+function apiSaveImportTemplate(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.name) return { ok: false, error: 'Nama template wajib diisi.' };
+    var sheet = Database.getSheet('Config_Import');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var nameCol = headers.indexOf('TemplateName');
+    // Update if exists
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][nameCol]).trim() === String(payload.name).trim()) {
+        var typeCol = headers.indexOf('Type');
+        var mapCol = headers.indexOf('Mapping');
+        if (payload.type !== undefined && typeCol !== -1) sheet.getRange(i + 1, typeCol + 1).setValue(payload.type);
+        if (payload.mapping !== undefined && mapCol !== -1) sheet.getRange(i + 1, mapCol + 1).setValue(payload.mapping);
+        return { ok: true };
+      }
+    }
+    // Insert new
+    sheet.appendRow([
+      String(payload.name).trim(),
+      String(payload.type || '').trim(),
+      String(payload.mapping || '').trim()
+    ]);
+    return { ok: true };
+  });
+}
+
+function apiDeleteImportTemplate(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.name) return { ok: false, error: 'Nama template wajib diisi.' };
+    var sheet = Database.getSheet('Config_Import');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var nameCol = headers.indexOf('TemplateName');
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][nameCol]).trim() === String(payload.name).trim()) {
+        sheet.deleteRow(i + 1);
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'Template tidak ditemukan.' };
+  });
+}
+
+/* =========================================================================
+ *  UI THEME / CONFIG APIs
+ * ========================================================================= */
+
+function _readUIConfig() {
+  try {
+    var rows = Database.readAll('Config_UI');
+    var config = {};
+    for (var i = 0; i < rows.length; i++) {
+      var key = String(rows[i].key || '').trim();
+      if (key) config[key] = rows[i].value || '';
+    }
+    return config;
+  } catch (e) {
+    return {};
+  }
+}
+
+function apiGetUIConfig() {
+  try {
+    var config = _readUIConfig();
+    return { ok: true, config: config };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiSaveUIConfig(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.key) return { ok: false, error: 'Key wajib diisi.' };
+    var sheet = Database.getSheet('Config_UI');
+    if (!sheet) return { ok: false, error: 'Sheet tidak ditemukan.' };
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var keyCol = headers.indexOf('Key');
+    var valCol = headers.indexOf('Value');
+    // Upsert: update if exists, insert if not
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][keyCol]).trim() === String(payload.key).trim()) {
+        sheet.getRange(i + 1, valCol + 1).setValue(payload.value !== undefined ? payload.value : '');
+        return { ok: true };
+      }
+    }
+    // Insert new
+    sheet.appendRow([String(payload.key).trim(), payload.value !== undefined ? String(payload.value) : '']);
+    return { ok: true };
+  });
+}
+
+function apiUploadLogo(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    if (!payload.dataBase64) return { ok: false, error: 'File kosong / gagal dibaca.' };
+    var bytes = Utilities.base64Decode(payload.dataBase64);
+    var blob = Utilities.newBlob(bytes, payload.mimeType || 'image/png', payload.filename || 'logo.png');
+    var folder = _buktiFolder();
+    var file = folder.createFile(blob);
+    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+    var url = file.getUrl();
+    // Store in Config_UI
+    var sheet = Database.getSheet('Config_UI');
+    if (sheet) {
+      var data = sheet.getDataRange().getValues();
+      var headers = data[0];
+      var keyCol = headers.indexOf('Key');
+      var valCol = headers.indexOf('Value');
+      var found = false;
+      for (var i = 1; i < data.length; i++) {
+        if (String(data[i][keyCol]).trim() === 'logoUrl') {
+          sheet.getRange(i + 1, valCol + 1).setValue(url);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        sheet.appendRow(['logoUrl', url]);
+      }
+    }
+    return { ok: true, url: url };
+  });
 }
 
 /* =========================================================================

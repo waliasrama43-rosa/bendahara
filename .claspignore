@@ -1,5 +1,15 @@
+# clasp pushes from rootDir = "standalone".
+# Only these 3 files should be uploaded to Apps Script:
+#   - appsscript.json (manifest)
+#   - Code.gs         (all backend logic)
+#   - index.html      (web UI)
+# Everything else (the src/ multi-file version, cloudflare, docs) is ignored.
+
 **/**
-!src/**/*
+
 !appsscript.json
-!Kode.js
-!cloudflare
+!Code.gs
+!index.html
+!standalone/appsscript.json
+!standalone/Code.gs
+!standalone/index.html

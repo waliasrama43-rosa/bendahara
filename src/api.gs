@@ -28,6 +28,25 @@ function _parseRupiah(val) {
   return parseInt(cleaned, 10) || 0;
 }
 
+// Bulan disimpan sebagai "YYYY-M" (default: bulan berjalan).
+function _normalizeBulan(val) {
+  var s = String(val == null ? '' : val).trim();
+  var parts = s.split('-');
+  var y = parseInt(parts[0], 10);
+  var m = parseInt(parts[1], 10);
+  if (y >= 2000 && y <= 2100 && m >= 1 && m <= 12) return y + '-' + m;
+  var now = new Date();
+  return now.getFullYear() + '-' + (now.getMonth() + 1);
+}
+
+// Jenjang dibatasi: SD, SMP, SMA/SMK.
+function _normalizeJenjang(val) {
+  var s = String(val == null ? '' : val).trim().toUpperCase();
+  if (s === 'SD' || s === 'SMP' || s === 'SMA/SMK') return s;
+  if (s === 'SMA' || s === 'SMK' || s === 'SMA-SMK') return 'SMA/SMK';
+  return '';
+}
+
 /**
  * Called once when the UI loads. Initializes DB, seeds demo data on first run,
  * and returns the initial dashboard payload.
@@ -80,7 +99,9 @@ function apiGetTransactions(payload) {
         nama: t.nama_kegiatan,
         jumlah: Number(t.jumlah_rupiah) || 0,
         timestamp: t.timestamp,
-        status: String(t.status_verifikasi || 'pending')
+        status: String(t.status_verifikasi || 'pending'),
+        bulan: t.bulan ? String(t.bulan) : '',
+        jenjang: t.jenjang ? String(t.jenjang) : ''
       };
     });
     rows.reverse();
@@ -99,6 +120,8 @@ function apiSaveManualRows(payload) {
     payload = payload || {};
     var schoolId = _resolveSchoolId(payload);
     var rows = payload.rows || [];
+    var bulan = _normalizeBulan(payload.bulan);
+    var jenjang = _normalizeJenjang(payload.jenjang);
     var saved = 0;
     var skipped = 0;
     var failed = 0;
@@ -124,7 +147,9 @@ function apiSaveManualRows(payload) {
         jumlah_rupiah: jumlah,
         timestamp: new Date().toISOString(),
         status_verifikasi: 'pending',
-        school_id: schoolId
+        school_id: schoolId,
+        bulan: bulan,
+        jenjang: jenjang
       });
       if (ok) { saved++; } else { failed++; }
     });
@@ -147,6 +172,8 @@ function apiUploadCSV(payload) {
   try {
     payload = payload || {};
     var schoolId = _resolveSchoolId(payload);
+    var bulan = _normalizeBulan(payload.bulan);
+    var jenjang = _normalizeJenjang(payload.jenjang);
     var csv = String(payload.csv || '').trim();
     if (!csv) return { ok: false, error: 'Data CSV kosong.' };
 
@@ -184,7 +211,9 @@ function apiUploadCSV(payload) {
         jumlah_rupiah: jumlah,
         timestamp: new Date().toISOString(),
         status_verifikasi: 'pending',
-        school_id: schoolId
+        school_id: schoolId,
+        bulan: bulan,
+        jenjang: jenjang
       });
       processed++;
     }
@@ -253,23 +282,44 @@ function apiVerifyTransaction(payload) {
 }
 
 /**
- * Inline edit a single field of a transaction.
- * payload = { id, field, value }
+ * Edit a transaction's editable fields.
+ * payload = { id, kodeAnggaran, namaKegiatan, jumlahRupiah }
  */
 function apiUpdateTransaction(payload) {
   try {
     payload = payload || {};
-    if (!payload.id || !payload.field) return { ok: false, error: 'Data tidak lengkap.' };
-
-    var allowed = ['kode_anggaran', 'nama_kegiatan', 'jumlah_rupiah', 'status_verifikasi'];
-    if (allowed.indexOf(payload.field) === -1) return { ok: false, error: 'Field tidak dapat diedit.' };
-
-    var value = payload.value;
-    if (payload.field === 'jumlah_rupiah') value = _parseRupiah(value);
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
 
     var patch = {};
-    patch[payload.field] = value;
+    if (payload.kodeAnggaran !== undefined) patch.kode_anggaran = String(payload.kodeAnggaran).trim();
+    if (payload.namaKegiatan !== undefined) patch.nama_kegiatan = String(payload.namaKegiatan).trim();
+    if (payload.jumlahRupiah !== undefined) patch.jumlah_rupiah = _parseRupiah(payload.jumlahRupiah);
+    if (payload.bulan !== undefined) patch.bulan = _normalizeBulan(payload.bulan);
+    if (payload.jenjang !== undefined) patch.jenjang = _normalizeJenjang(payload.jenjang);
+
+    if (payload.kodeAnggaran !== undefined && !patch.kode_anggaran) {
+      return { ok: false, error: 'Kode anggaran tidak boleh kosong.' };
+    }
+    if (payload.namaKegiatan !== undefined && !patch.nama_kegiatan) {
+      return { ok: false, error: 'Nama kegiatan tidak boleh kosong.' };
+    }
+
     var ok = Database.updateTransaction(payload.id, patch);
+    return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+/**
+ * Delete a transaction.
+ * payload = { id }
+ */
+function apiDeleteTransaction(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    var ok = Database.deleteTransaction(payload.id);
     return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
   } catch (e) {
     return { ok: false, error: String(e && e.message || e) };

@@ -21,7 +21,8 @@ var Database = {
     Data_Transaksi: [
       'ID_Transaksi', 'Kode_Anggaran', 'Nama_Kegiatan', 'Jumlah_Rupiah',
       'Timestamp', 'Status_Verifikasi', 'School_ID', 'Kode_Program',
-      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan'
+      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan',
+      'Bulan', 'Jenjang'
     ],
     Data_Sekolah: [
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
@@ -76,6 +77,14 @@ var Database = {
       }
       if (sheet.getLastRow() === 0) {
         sheet.appendRow(self.HEADERS[name]);
+      } else {
+        // Self-heal: add any new canonical columns missing from an old sheet.
+        var existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+        var missing = [];
+        self.HEADERS[name].forEach(function (h) { if (existing.indexOf(h) === -1) missing.push(h); });
+        if (missing.length) {
+          sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+        }
       }
     });
 
@@ -276,6 +285,27 @@ var Database = {
   },
 
   /**
+   * Delete a transaction row by id.
+   */
+  deleteTransaction: function (transactionId) {
+    try {
+      var sheet = this.getSheet('Data_Transaksi');
+      if (!sheet) return false;
+      var data = sheet.getDataRange().getValues();
+      for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === transactionId) {
+          sheet.deleteRow(i + 1);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      Logger.log('deleteTransaction error: ' + error.message);
+      return false;
+    }
+  },
+
+  /**
    * Get transactions filtered by school and (optionally) period "YYYY-M".
    * Pass period === '*' or falsy to get all for the school.
    */
@@ -285,7 +315,8 @@ var Database = {
     return all.filter(function (t) {
       if (schoolId && t.school_id && t.school_id !== schoolId) return false;
       if (!period || period === '*') return true;
-      return self.extractPeriod(t.timestamp) === period;
+      var p = t.bulan ? String(t.bulan) : self.extractPeriod(t.timestamp);
+      return p === period;
     });
   },
 

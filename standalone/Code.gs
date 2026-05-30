@@ -71,7 +71,8 @@ var Database = {
     Data_Transaksi: [
       'ID_Transaksi', 'Kode_Anggaran', 'Nama_Kegiatan', 'Jumlah_Rupiah',
       'Timestamp', 'Status_Verifikasi', 'School_ID', 'Kode_Program',
-      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan'
+      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan',
+      'Bulan', 'Jenjang', 'Bukti_URL'
     ],
     Data_Sekolah: [
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
@@ -102,7 +103,17 @@ var Database = {
     Object.keys(this.HEADERS).forEach(function (name) {
       var sheet = ss.getSheetByName(name);
       if (!sheet) sheet = ss.insertSheet(name);
-      if (sheet.getLastRow() === 0) sheet.appendRow(self.HEADERS[name]);
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(self.HEADERS[name]);
+      } else {
+        // Self-heal: tambahkan kolom baru yang belum ada di sheet lama.
+        var existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+        var missing = [];
+        self.HEADERS[name].forEach(function (h) { if (existing.indexOf(h) === -1) missing.push(h); });
+        if (missing.length) {
+          sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+        }
+      }
     });
     var def = ss.getSheetByName('Sheet1');
     if (def && ss.getSheets().length > 1 && def.getLastRow() === 0) {
@@ -135,7 +146,7 @@ var Database = {
   },
 
   headerToKey: function (header) {
-    return String(header).toLowerCase().replace(/\s+/g, '_');
+    return String(header).toLowerCase().split(' ').join('_');
   },
 
   insert: function (sheetName, data) {
@@ -198,13 +209,55 @@ var Database = {
     }
   },
 
+  updateTransactionFields: function (transactionId, patch) {
+    try {
+      var sheet = this.getSheet('Data_Transaksi');
+      if (!sheet) return false;
+      var data = sheet.getDataRange().getValues();
+      var headers = data[0];
+      var self = this;
+      for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === transactionId) {
+          for (var j = 0; j < headers.length; j++) {
+            var key = self.headerToKey(headers[j]);
+            if (patch[key] !== undefined) sheet.getRange(i + 1, j + 1).setValue(patch[key]);
+          }
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      Logger.log('updateTransactionFields error: ' + error.message);
+      return false;
+    }
+  },
+
+  deleteTransaction: function (transactionId) {
+    try {
+      var sheet = this.getSheet('Data_Transaksi');
+      if (!sheet) return false;
+      var data = sheet.getDataRange().getValues();
+      for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === transactionId) {
+          sheet.deleteRow(i + 1);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      Logger.log('deleteTransaction error: ' + error.message);
+      return false;
+    }
+  },
+
   getTransactionsBySchool: function (schoolId, period) {
     var all = this.readAll('Data_Transaksi');
     var self = this;
     return all.filter(function (t) {
       if (schoolId && t.school_id && t.school_id !== schoolId) return false;
       if (!period || period === '*') return true;
-      return self.extractPeriod(t.timestamp) === period;
+      var p = t.bulan ? String(t.bulan) : self.extractPeriod(t.timestamp);
+      return p === period;
     });
   },
 
@@ -317,7 +370,8 @@ function _genTrxId() {
 }
 function _parseRupiah(val) {
   if (typeof val === 'number') return Math.round(val);
-  var cleaned = String(val == null ? '' : val).replace(/[^0-9]/g, '');
+  var s = String(val == null ? '' : val), cleaned = '';
+  for (var i = 0; i < s.length; i++) { var ch = s.charAt(i); if (ch >= '0' && ch <= '9') cleaned += ch; }
   return parseInt(cleaned, 10) || 0;
 }
 function _splitCsvLine(line) {
@@ -333,6 +387,25 @@ function _splitCsvLine(line) {
   }
   result.push(cur);
   return result;
+}
+
+// Bulan disimpan sebagai "YYYY-M" (mis. "2026-3"). Default: bulan berjalan.
+function _normalizeBulan(val) {
+  var s = String(val == null ? '' : val).trim();
+  var parts = s.split('-');
+  var y = parseInt(parts[0], 10);
+  var m = parseInt(parts[1], 10);
+  if (y >= 2000 && y <= 2100 && m >= 1 && m <= 12) return y + '-' + m;
+  var now = new Date();
+  return now.getFullYear() + '-' + (now.getMonth() + 1);
+}
+
+// Jenjang dibatasi: SD, SMP, SMA/SMK.
+function _normalizeJenjang(val) {
+  var s = String(val == null ? '' : val).trim().toUpperCase();
+  if (s === 'SD' || s === 'SMP' || s === 'SMA/SMK') return s;
+  if (s === 'SMA' || s === 'SMK' || s === 'SMA-SMK') return 'SMA/SMK';
+  return '';
 }
 
 /* =========================================================================
@@ -370,7 +443,10 @@ function apiGetTransactions(payload) {
       return {
         id: t.id_transaksi, kode: t.kode_anggaran, nama: t.nama_kegiatan,
         jumlah: Number(t.jumlah_rupiah) || 0, timestamp: t.timestamp,
-        status: String(t.status_verifikasi || 'pending')
+        status: String(t.status_verifikasi || 'pending'),
+        bulan: t.bulan ? String(t.bulan) : '',
+        jenjang: t.jenjang ? String(t.jenjang) : '',
+        buktiUrl: t.bukti_url ? String(t.bukti_url) : ''
       };
     });
     rows.reverse();
@@ -383,6 +459,8 @@ function apiSaveManualRows(payload) {
     payload = payload || {};
     var schoolId = _resolveSchoolId(payload);
     var rows = payload.rows || [];
+    var bulan = _normalizeBulan(payload.bulan);
+    var jenjang = _normalizeJenjang(payload.jenjang);
     var saved = 0, skipped = 0, failed = 0;
     rows.forEach(function (r) {
       var kode = (r.kodeAnggaran || '').toString().trim();
@@ -393,7 +471,8 @@ function apiSaveManualRows(payload) {
       var ok = Database.insert('Data_Transaksi', {
         id_transaksi: _genTrxId(), kode_anggaran: kode, nama_kegiatan: nama,
         jumlah_rupiah: jumlah, timestamp: new Date().toISOString(),
-        status_verifikasi: 'pending', school_id: schoolId
+        status_verifikasi: 'pending', school_id: schoolId,
+        bulan: bulan, jenjang: jenjang
       });
       if (ok) saved++; else failed++;
     });
@@ -408,9 +487,11 @@ function apiUploadCSV(payload) {
   try {
     payload = payload || {};
     var schoolId = _resolveSchoolId(payload);
+    var bulan = _normalizeBulan(payload.bulan);
+    var jenjang = _normalizeJenjang(payload.jenjang);
     var csv = String(payload.csv || '').trim();
     if (!csv) return { ok: false, error: 'Data CSV kosong.' };
-    var lines = csv.split(/\r?\n/);
+    var lines = csv.split('\r\n').join('\n').split('\r').join('\n').split('\n');
     var processed = 0, errors = 0, startIndex = 0;
     var first = _splitCsvLine(lines[0]).join(' ').toLowerCase();
     if (first.indexOf('kode') !== -1 || first.indexOf('nama') !== -1 || first.indexOf('jumlah') !== -1) startIndex = 1;
@@ -424,7 +505,8 @@ function apiUploadCSV(payload) {
       Database.insert('Data_Transaksi', {
         id_transaksi: _genTrxId(), kode_anggaran: kode, nama_kegiatan: nama,
         jumlah_rupiah: jumlah, timestamp: new Date().toISOString(),
-        status_verifikasi: 'pending', school_id: schoolId
+        status_verifikasi: 'pending', school_id: schoolId,
+        bulan: bulan, jenjang: jenjang
       });
       processed++;
     }
@@ -449,6 +531,32 @@ function apiVerifyTransaction(payload) {
     var status = payload.action === 'reject' ? 'rejected' : 'verified';
     var updated = Database.updateTransactionStatus(payload.id, status);
     return updated ? { ok: true, status: status } : { ok: false, error: 'Transaksi tidak ditemukan.' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiUpdateTransaction(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    var patch = {};
+    if (payload.kodeAnggaran !== undefined) patch.kode_anggaran = String(payload.kodeAnggaran).trim();
+    if (payload.namaKegiatan !== undefined) patch.nama_kegiatan = String(payload.namaKegiatan).trim();
+    if (payload.jumlahRupiah !== undefined) patch.jumlah_rupiah = _parseRupiah(payload.jumlahRupiah);
+    if (payload.bulan !== undefined) patch.bulan = _normalizeBulan(payload.bulan);
+    if (payload.jenjang !== undefined) patch.jenjang = _normalizeJenjang(payload.jenjang);
+    if (!patch.kode_anggaran && payload.kodeAnggaran !== undefined) return { ok: false, error: 'Kode anggaran tidak boleh kosong.' };
+    if (patch.nama_kegiatan === '' ) return { ok: false, error: 'Nama kegiatan tidak boleh kosong.' };
+    var ok = Database.updateTransactionFields(payload.id, patch);
+    return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiDeleteTransaction(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    var ok = Database.deleteTransaction(payload.id);
+    return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 
@@ -515,4 +623,137 @@ function selfTest() {
   Logger.log(JSON.stringify(result, null, 2));
   Logger.log('Buka spreadsheet ini untuk verifikasi: ' + url);
   return result;
+}
+
+
+
+/* =========================================================================
+ *  BUKTI / KWITANSI — unggah file bukti ke Google Drive
+ * ========================================================================= */
+
+function _buktiFolder() {
+  var name = 'Bukti ERP Sekolah Rakyat';
+  var it = DriveApp.getFoldersByName(name);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+
+/**
+ * Unggah file bukti (gambar/PDF) dan tautkan ke sebuah transaksi.
+ * payload = { id, filename, mimeType, dataBase64 }
+ * Catatan: butuh otorisasi akses Google Drive (akan diminta sekali).
+ */
+function apiUploadBukti(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    if (!payload.dataBase64) return { ok: false, error: 'File kosong / gagal dibaca.' };
+
+    var bytes = Utilities.base64Decode(payload.dataBase64);
+    var blob = Utilities.newBlob(bytes, payload.mimeType || 'application/octet-stream', payload.filename || ('bukti-' + payload.id));
+    var file = _buktiFolder().createFile(blob);
+    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+    var url = file.getUrl();
+
+    Database.updateTransactionFields(payload.id, { bukti_url: url });
+    return { ok: true, url: url };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  EXPORT LAPORAN SPJ (CSV dirakit di server, + estimasi PPN 11%)
+ * ========================================================================= */
+
+function apiExportData(payload) {
+  try {
+    payload = payload || {};
+    var schoolId = _resolveSchoolId(payload);
+    var period = payload.period || '*';
+    var jenjang = _normalizeJenjang(payload.jenjang);
+
+    var school = null;
+    var schools = Database.readAll('Data_Sekolah');
+    for (var i = 0; i < schools.length; i++) {
+      if (schools[i].school_id === schoolId) { school = schools[i]; break; }
+    }
+
+    var rows = Database.getTransactionsBySchool(schoolId, period).filter(function (t) {
+      if (jenjang && String(t.jenjang || '') !== jenjang) return false;
+      return true;
+    });
+
+    function q(s) { return '"' + String(s == null ? '' : s).split('"').join('""') + '"'; }
+
+    var out = [];
+    out.push(q('LAPORAN SPJ - ' + (school ? school.nama_sekolah : 'Sekolah')));
+    out.push(q('Kepala Sekolah: ' + (school ? school.kepala_sekolah : '-')));
+    out.push(q('Bendahara: ' + (school ? school.bendahara : '-')));
+    out.push(q('Periode: ' + (period === '*' ? 'Semua' : period) + ' | Jenjang: ' + (jenjang || 'Semua')));
+    out.push('');
+    out.push(['No', 'Kode Anggaran', 'Nama Kegiatan', 'Bulan', 'Jenjang',
+      'DPP (Rp)', 'PPN 11% (Rp)', 'Total (Rp)', 'Status', 'Bukti'].map(q).join(','));
+
+    var totDpp = 0, totPpn = 0, totAll = 0;
+    rows.forEach(function (t, idx) {
+      var dpp = Number(t.jumlah_rupiah) || 0;
+      var ppn = Math.round(dpp * 0.11);
+      var tot = dpp + ppn;
+      totDpp += dpp; totPpn += ppn; totAll += tot;
+      out.push([
+        q(idx + 1), q(t.kode_anggaran), q(t.nama_kegiatan), q(t.bulan || ''),
+        q(t.jenjang || ''), q(dpp), q(ppn), q(tot),
+        q(t.status_verifikasi || 'pending'), q(t.bukti_url || '')
+      ].join(','));
+    });
+    out.push(['', '', q('TOTAL'), '', '', q(totDpp), q(totPpn), q(totAll), '', ''].join(','));
+
+    return {
+      ok: true,
+      filename: 'Laporan_SPJ_' + (period === '*' ? 'semua' : period) + '.csv',
+      content: out.join('\r\n'),
+      jumlahBaris: rows.length
+    };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  DATA DUMMY untuk uji coba
+ * ========================================================================= */
+
+function _dummyRows(schoolId) {
+  var y = new Date().getFullYear();
+  var samples = [
+    { k: '521211', n: 'Belanja ATK Kantor', j: 850000, b: y + '-1', g: 'SD', s: 'verified' },
+    { k: '521211', n: 'Pembelian Kertas HVS', j: 450000, b: y + '-1', g: 'SD', s: 'verified' },
+    { k: '521811', n: 'Konsumsi Rapat Komite', j: 1250000, b: y + '-2', g: 'SMP', s: 'pending' },
+    { k: '522141', n: 'Sewa Sound System', j: 1500000, b: y + '-2', g: 'SMP', s: 'verified' },
+    { k: '523111', n: 'Pemeliharaan Gedung', j: 3500000, b: y + '-3', g: 'SMA/SMK', s: 'pending' },
+    { k: '521211', n: 'Spidol & Penghapus', j: 175000, b: y + '-3', g: 'SD', s: 'verified' },
+    { k: '524111', n: 'Perjalanan Dinas Lomba', j: 2000000, b: y + '-4', g: 'SMA/SMK', s: 'pending' },
+    { k: '521119', n: 'Honor Narasumber', j: 900000, b: y + '-4', g: 'SMP', s: 'verified' }
+  ];
+  return samples.map(function (r) {
+    return {
+      id_transaksi: _genTrxId(), kode_anggaran: r.k, nama_kegiatan: r.n,
+      jumlah_rupiah: r.j, timestamp: new Date().toISOString(),
+      status_verifikasi: r.s, school_id: schoolId, bulan: r.b, jenjang: r.g
+    };
+  });
+}
+
+function apiSeedDummy(payload) {
+  try {
+    var schoolId = _resolveSchoolId(payload);
+    var rows = _dummyRows(schoolId);
+    var n = 0;
+    rows.forEach(function (r) { if (Database.insert('Data_Transaksi', r)) n++; });
+    return { ok: true, inserted: n };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+// Bisa dijalankan langsung dari editor Apps Script (pilih fungsi -> Run).
+function seedDummyData() {
+  var schoolId = Database.ensureDefaultSchool();
+  var res = apiSeedDummy({ schoolId: schoolId });
+  Logger.log('Dummy inserted: ' + JSON.stringify(res));
+  return res;
 }

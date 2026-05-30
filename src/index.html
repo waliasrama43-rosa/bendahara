@@ -141,6 +141,12 @@
     .toast.err{background:#991b1b}
     @keyframes slideIn{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
 
+    /* Modal */
+    .modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;z-index:80;padding:16px}
+    .modal-overlay.show{display:flex}
+    .modal{background:#fff;border-radius:14px;padding:20px;width:430px;max-width:100%;box-shadow:0 20px 50px rgba(0,0,0,.3);animation:slideIn .15s ease}
+    .modal h3{margin:0 0 14px;font-size:16px}
+
     /* Loading bar */
     #loading{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:0;transition:width .3s;z-index:60}
 
@@ -192,6 +198,17 @@
     </div>
   </div>
   <div id="toast"></div>
+
+  <div id="modal" class="modal-overlay">
+    <div class="modal">
+      <h3 id="modalTitle">Edit</h3>
+      <div id="modalBody"></div>
+      <div class="row-actions" style="justify-content:flex-end;margin-top:8px">
+        <button class="btn ghost" type="button" onclick="closeModal()">Batal</button>
+        <button class="btn primary" type="button" id="modalSave">Simpan</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     /* ===================== Helpers ===================== */
@@ -245,6 +262,33 @@
       var d = new Date(s);
       if (isNaN(d.getTime())) return String(s);
       return d.toLocaleDateString('id-ID', {day:'2-digit',month:'short',year:'numeric'});
+    }
+
+    /* Bulan & Jenjang helpers */
+    var MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    var JENJANG_LIST = ['SD','SMP','SMA/SMK'];
+    function bulanLabel(val){
+      if(!val) return '-';
+      var p = String(val).split('-'); var y = parseInt(p[0],10); var m = parseInt(p[1],10);
+      if (!(m>=1 && m<=12)) return String(val);
+      return MONTHS[m-1] + ' ' + y;
+    }
+    function monthOptions(sel){
+      var now = new Date(); var cy = now.getFullYear();
+      var cur = sel || (cy + '-' + (now.getMonth()+1));
+      var html = '';
+      for (var y = cy-1; y <= cy+1; y++){
+        for (var m=1;m<=12;m++){
+          var v = y + '-' + m;
+          html += '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+MONTHS[m-1]+' '+y+'</option>';
+        }
+      }
+      return html;
+    }
+    function jenjangOptions(sel, firstLabel){
+      var html = '<option value="">'+(firstLabel||'(pilih jenjang)')+'</option>';
+      JENJANG_LIST.forEach(function(j){ html += '<option value="'+j+'"'+(j===sel?' selected':'')+'>'+j+'</option>'; });
+      return html;
     }
 
     var PAGE_META = {
@@ -329,7 +373,11 @@
 
           '<div class="tabpane active" data-pane="manual">' +
             '<h2>Input Manual</h2>' +
-            '<p class="desc">Isi kolom di bawah lalu klik <b>Simpan Semua</b>. Baris kosong akan diabaikan.</p>' +
+            '<p class="desc">Pilih <b>Bulan</b> & <b>Jenjang</b>, isi kolom, lalu klik <b>Simpan Semua</b>. Baris kosong diabaikan.</p>' +
+            '<div class="grid2">' +
+              '<div class="field"><label>Bulan</label><select id="manualBulan">'+monthOptions()+'</select></div>' +
+              '<div class="field"><label>Jenjang</label><select id="manualJenjang">'+jenjangOptions('','(pilih jenjang)')+'</select></div>' +
+            '</div>' +
             '<table>' +
               '<thead><tr>' +
                 '<th style="width:36px">#</th>' +
@@ -349,6 +397,10 @@
           '<div class="tabpane" data-pane="upload">' +
             '<h2>Upload File (CSV)</h2>' +
             '<p class="desc">Tempel isi CSV atau pilih file. Format kolom: <span class="mono">Kode Anggaran, Nama Kegiatan, Jumlah</span>.</p>' +
+            '<div class="grid2">' +
+              '<div class="field"><label>Bulan</label><select id="csvBulan">'+monthOptions()+'</select></div>' +
+              '<div class="field"><label>Jenjang</label><select id="csvJenjang">'+jenjangOptions('','(pilih jenjang)')+'</select></div>' +
+            '</div>' +
             '<div class="field">' +
               '<label>Pilih file CSV</label>' +
               '<input type="file" id="csvFile" accept=".csv,text/csv,text/plain">' +
@@ -442,7 +494,7 @@
       }
       var btn = document.getElementById('saveManualBtn');
       btn.disabled = true;
-      gcall('apiSaveManualRows', { schoolId: STATE.schoolId, rows: rows }).then(function(res){
+      gcall('apiSaveManualRows', { schoolId: STATE.schoolId, bulan: getVal('manualBulan'), jenjang: getVal('manualJenjang'), rows: rows }).then(function(res){
         btn.disabled = false;
         if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal menyimpan');
         if (res.saved > 0){
@@ -458,7 +510,7 @@
       if (!csv.trim()){ toast('Tempel data CSV terlebih dahulu.', 'err'); return; }
       var btn = document.getElementById('uploadBtn');
       btn.disabled = true;
-      gcall('apiUploadCSV', { schoolId: STATE.schoolId, csv: csv }).then(function(res){
+      gcall('apiUploadCSV', { schoolId: STATE.schoolId, bulan: getVal('csvBulan'), jenjang: getVal('csvJenjang'), csv: csv }).then(function(res){
         btn.disabled = false;
         if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal memproses');
         toast(res.processed + ' baris diimpor' + (res.errors ? ', ' + res.errors + ' baris gagal' : ''), res.processed ? 'ok' : 'err');
@@ -517,42 +569,80 @@
     }
 
     /* ===================== Lihat Transaksi ===================== */
+    var TRX_ALL = [];
     function renderTransaksi(){
       var c = document.getElementById('content');
+      var now = new Date();
+      var months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+      var opts = '<option value="*">Semua Periode</option>';
+      for (var m=0;m<12;m++){ var v=now.getFullYear()+'-'+(m+1); opts+='<option value="'+v+'">'+months[m]+' '+now.getFullYear()+'</option>'; }
       c.innerHTML =
         '<div class="panel">' +
           '<h2>Daftar Transaksi</h2>' +
-          '<p class="desc">Tinjau, setujui, atau tolak transaksi.</p>' +
+          '<p class="desc">Tinjau, setujui/tolak, edit, atau hapus transaksi.</p>' +
+          '<div class="grid2">' +
+            '<div class="field"><label>Filter Periode</label><select id="trxPeriod">'+opts+'</select></div>' +
+            '<div class="field"><label>Filter Jenjang</label><select id="trxJenjang">'+jenjangOptions('','Semua Jenjang')+'</select></div>' +
+          '</div>' +
+          '<div class="field"><label>Cari (kode / nama)</label><input id="trxSearch" placeholder="ketik untuk mencari..."></div>' +
           '<div id="trxBox"><div class="empty">Memuat...</div></div>' +
         '</div>';
+      document.getElementById('trxPeriod').addEventListener('change', renderTrxTable);
+      document.getElementById('trxJenjang').addEventListener('change', renderTrxTable);
+      document.getElementById('trxSearch').addEventListener('input', renderTrxTable);
       loadTransaksi();
     }
     function loadTransaksi(){
       var box = document.getElementById('trxBox');
+      box.innerHTML = '<div class="empty">Memuat...</div>';
       gcall('apiGetTransactions', { schoolId: STATE.schoolId }).then(function(res){
         if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal memuat');
-        if (!res.rows.length){ box.innerHTML = '<div class="empty">Belum ada transaksi. Tambahkan lewat menu Input / Upload RKKAL.</div>'; return; }
-        var rows = res.rows.map(function(t){
-          var st = (t.status||'pending').toLowerCase();
-          var cls = st.indexOf('verif')>-1 ? 'verified' : (st.indexOf('reject')>-1||st.indexOf('tolak')>-1 ? 'rejected' : 'pending');
-          var label = cls==='verified'?'Terverifikasi':(cls==='rejected'?'Ditolak':'Menunggu');
-          var actions = cls==='pending'
-            ? '<button class="btn ok tiny" onclick="verifyTrx(\''+t.id+'\',\'approve\')">Setujui</button> ' +
-              '<button class="btn no tiny" onclick="verifyTrx(\''+t.id+'\',\'reject\')">Tolak</button>'
-            : '<span class="muted">-</span>';
-          return '<tr>' +
-            '<td class="mono">'+esc(t.kode)+'</td>' +
-            '<td>'+esc(t.nama)+'</td>' +
-            '<td class="num">'+rupiah(t.jumlah)+'</td>' +
-            '<td>'+fmtDate(t.timestamp)+'</td>' +
-            '<td><span class="badge '+cls+'">'+label+'</span></td>' +
-            '<td>'+actions+'</td>' +
-          '</tr>';
-        }).join('');
-        box.innerHTML =
-          '<table><thead><tr><th>Kode</th><th>Nama Kegiatan</th><th class="num">Jumlah</th><th>Tanggal</th><th>Status</th><th>Aksi</th></tr></thead>' +
-          '<tbody>'+rows+'</tbody></table>';
+        TRX_ALL = res.rows || [];
+        renderTrxTable();
       }).catch(function(err){ box.innerHTML = '<div class="empty">Gagal: '+esc(err.message)+'</div>'; });
+    }
+    function trxPeriodOf(ts){ if(!ts) return ''; var d=new Date(ts); if(isNaN(d.getTime())) return ''; return d.getFullYear()+'-'+(d.getMonth()+1); }
+    function findTrx(id){ for(var i=0;i<TRX_ALL.length;i++){ if(TRX_ALL[i].id===id) return TRX_ALL[i]; } return null; }
+    function renderTrxTable(){
+      var box = document.getElementById('trxBox');
+      var period = (document.getElementById('trxPeriod')||{}).value || '*';
+      var jenjang = (document.getElementById('trxJenjang')||{}).value || '';
+      var q = ((document.getElementById('trxSearch')||{}).value || '').toLowerCase().trim();
+      var list = TRX_ALL.filter(function(t){
+        var p = t.bulan ? String(t.bulan) : trxPeriodOf(t.timestamp);
+        if (period!=='*' && p!==period) return false;
+        if (jenjang && String(t.jenjang||'')!==jenjang) return false;
+        if (q && String(t.kode).toLowerCase().indexOf(q)<0 && String(t.nama).toLowerCase().indexOf(q)<0) return false;
+        return true;
+      });
+      if (!list.length){ box.innerHTML = '<div class="empty">Tidak ada transaksi yang cocok. Tambahkan lewat menu Input / Upload RKKAL.</div>'; return; }
+      var total = 0;
+      var rows = list.map(function(t){
+        total += Number(t.jumlah)||0;
+        var st = (t.status||'pending').toLowerCase();
+        var cls = st.indexOf('verif')>-1 ? 'verified' : (st.indexOf('reject')>-1||st.indexOf('tolak')>-1 ? 'rejected':'pending');
+        var label = cls==='verified'?'Terverifikasi':(cls==='rejected'?'Ditolak':'Menunggu');
+        var verifyBtns = cls==='pending'
+          ? '<button class="btn ok tiny" onclick="verifyTrx(\''+t.id+'\',\'approve\')">Setujui</button> ' +
+            '<button class="btn no tiny" onclick="verifyTrx(\''+t.id+'\',\'reject\')">Tolak</button> '
+          : '';
+        var actions = verifyBtns +
+          '<button class="btn ghost tiny" onclick="editTrx(\''+t.id+'\')">Edit</button> ' +
+          '<button class="btn no tiny" onclick="deleteTrx(\''+t.id+'\')">Hapus</button>';
+        return '<tr>' +
+          '<td class="mono">'+esc(t.kode)+'</td>' +
+          '<td>'+esc(t.nama)+'</td>' +
+          '<td class="num">'+rupiah(t.jumlah)+'</td>' +
+          '<td>'+bulanLabel(t.bulan)+'</td>' +
+          '<td>'+(t.jenjang?esc(t.jenjang):'-')+'</td>' +
+          '<td><span class="badge '+cls+'">'+label+'</span></td>' +
+          '<td style="white-space:nowrap">'+actions+'</td>' +
+        '</tr>';
+      }).join('');
+      box.innerHTML =
+        '<table><thead><tr><th>Kode</th><th>Nama Kegiatan</th><th class="num">Jumlah</th><th>Bulan</th><th>Jenjang</th><th>Status</th><th>Aksi</th></tr></thead>' +
+        '<tbody>'+rows+'</tbody>' +
+        '<tfoot><tr><th colspan="2" class="right">TOTAL ('+list.length+' item)</th><th class="num">'+rupiah(total)+'</th><th colspan="4"></th></tr></tfoot></table>';
     }
     function verifyTrx(id, action){
       gcall('apiVerifyTransaction', { id: id, action: action }).then(function(res){
@@ -561,6 +651,51 @@
         loadTransaksi();
       }).catch(function(err){ toast('Gagal: ' + err.message, 'err'); });
     }
+    function editTrx(id){
+      var t = findTrx(id); if(!t) return;
+      openModal('Edit Transaksi',
+        '<div class="field"><label>Kode Anggaran</label><input id="edKode" value="'+esc(t.kode)+'"></div>' +
+        '<div class="field"><label>Nama Kegiatan</label><input id="edNama" value="'+esc(t.nama)+'"></div>' +
+        '<div class="field"><label>Jumlah (Rp)</label><input id="edJumlah" class="num" inputmode="numeric" value="'+(Number(t.jumlah)||0)+'"></div>' +
+        '<div class="grid2">' +
+          '<div class="field"><label>Bulan</label><select id="edBulan">'+monthOptions(t.bulan)+'</select></div>' +
+          '<div class="field"><label>Jenjang</label><select id="edJenjang">'+jenjangOptions(t.jenjang,'(pilih jenjang)')+'</select></div>' +
+        '</div>',
+        function(){
+          var patch = {
+            id: id,
+            kodeAnggaran: document.getElementById('edKode').value,
+            namaKegiatan: document.getElementById('edNama').value,
+            jumlahRupiah: document.getElementById('edJumlah').value,
+            bulan: document.getElementById('edBulan').value,
+            jenjang: document.getElementById('edJenjang').value
+          };
+          gcall('apiUpdateTransaction', patch).then(function(res){
+            if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+            toast('Transaksi diperbarui.', 'ok');
+            closeModal(); loadTransaksi();
+          }).catch(function(err){ toast('Gagal: ' + err.message, 'err'); });
+        });
+    }
+    function deleteTrx(id){
+      var t = findTrx(id);
+      var info = t ? (t.kode + ' - ' + t.nama) : '';
+      if (!confirm('Hapus transaksi ini?\n\n' + info + '\n\nTindakan ini tidak dapat dibatalkan.')) return;
+      gcall('apiDeleteTransaction', { id: id }).then(function(res){
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+        toast('Transaksi dihapus.', 'ok');
+        loadTransaksi();
+      }).catch(function(err){ toast('Gagal: ' + err.message, 'err'); });
+    }
+
+    /* ===================== Modal helpers ===================== */
+    function openModal(title, bodyHtml, onSave){
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalBody').innerHTML = bodyHtml;
+      document.getElementById('modal').classList.add('show');
+      document.getElementById('modalSave').onclick = onSave;
+    }
+    function closeModal(){ document.getElementById('modal').classList.remove('show'); }
 
     /* ===================== Export ===================== */
     function renderExport(){

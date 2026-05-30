@@ -101,6 +101,27 @@ var Database = {
   },
 
   /**
+   * Public URL of the backing spreadsheet (so users can open & verify data).
+   */
+  getSpreadsheetUrl: function () {
+    try {
+      return this.init().getUrl();
+    } catch (e) {
+      return '';
+    }
+  },
+
+  /**
+   * Count data rows (excluding header) in a sheet.
+   */
+  countRows: function (sheetName) {
+    var sheet = this.getSheet(sheetName);
+    if (!sheet) return 0;
+    var last = sheet.getLastRow();
+    return last > 0 ? last - 1 : 0;
+  },
+
+  /**
    * Get a sheet by name, ensuring the DB is initialized first.
    */
   getSheet: function (sheetName) {

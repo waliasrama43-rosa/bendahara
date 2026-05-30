@@ -72,7 +72,7 @@ var Database = {
       'ID_Transaksi', 'Kode_Anggaran', 'Nama_Kegiatan', 'Jumlah_Rupiah',
       'Timestamp', 'Status_Verifikasi', 'School_ID', 'Kode_Program',
       'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan',
-      'Bulan', 'Jenjang'
+      'Bulan', 'Jenjang', 'Bukti_URL'
     ],
     Data_Sekolah: [
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
@@ -445,7 +445,8 @@ function apiGetTransactions(payload) {
         jumlah: Number(t.jumlah_rupiah) || 0, timestamp: t.timestamp,
         status: String(t.status_verifikasi || 'pending'),
         bulan: t.bulan ? String(t.bulan) : '',
-        jenjang: t.jenjang ? String(t.jenjang) : ''
+        jenjang: t.jenjang ? String(t.jenjang) : '',
+        buktiUrl: t.bukti_url ? String(t.bukti_url) : ''
       };
     });
     rows.reverse();
@@ -622,4 +623,137 @@ function selfTest() {
   Logger.log(JSON.stringify(result, null, 2));
   Logger.log('Buka spreadsheet ini untuk verifikasi: ' + url);
   return result;
+}
+
+
+
+/* =========================================================================
+ *  BUKTI / KWITANSI — unggah file bukti ke Google Drive
+ * ========================================================================= */
+
+function _buktiFolder() {
+  var name = 'Bukti ERP Sekolah Rakyat';
+  var it = DriveApp.getFoldersByName(name);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+
+/**
+ * Unggah file bukti (gambar/PDF) dan tautkan ke sebuah transaksi.
+ * payload = { id, filename, mimeType, dataBase64 }
+ * Catatan: butuh otorisasi akses Google Drive (akan diminta sekali).
+ */
+function apiUploadBukti(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    if (!payload.dataBase64) return { ok: false, error: 'File kosong / gagal dibaca.' };
+
+    var bytes = Utilities.base64Decode(payload.dataBase64);
+    var blob = Utilities.newBlob(bytes, payload.mimeType || 'application/octet-stream', payload.filename || ('bukti-' + payload.id));
+    var file = _buktiFolder().createFile(blob);
+    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+    var url = file.getUrl();
+
+    Database.updateTransactionFields(payload.id, { bukti_url: url });
+    return { ok: true, url: url };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  EXPORT LAPORAN SPJ (CSV dirakit di server, + estimasi PPN 11%)
+ * ========================================================================= */
+
+function apiExportData(payload) {
+  try {
+    payload = payload || {};
+    var schoolId = _resolveSchoolId(payload);
+    var period = payload.period || '*';
+    var jenjang = _normalizeJenjang(payload.jenjang);
+
+    var school = null;
+    var schools = Database.readAll('Data_Sekolah');
+    for (var i = 0; i < schools.length; i++) {
+      if (schools[i].school_id === schoolId) { school = schools[i]; break; }
+    }
+
+    var rows = Database.getTransactionsBySchool(schoolId, period).filter(function (t) {
+      if (jenjang && String(t.jenjang || '') !== jenjang) return false;
+      return true;
+    });
+
+    function q(s) { return '"' + String(s == null ? '' : s).split('"').join('""') + '"'; }
+
+    var out = [];
+    out.push(q('LAPORAN SPJ - ' + (school ? school.nama_sekolah : 'Sekolah')));
+    out.push(q('Kepala Sekolah: ' + (school ? school.kepala_sekolah : '-')));
+    out.push(q('Bendahara: ' + (school ? school.bendahara : '-')));
+    out.push(q('Periode: ' + (period === '*' ? 'Semua' : period) + ' | Jenjang: ' + (jenjang || 'Semua')));
+    out.push('');
+    out.push(['No', 'Kode Anggaran', 'Nama Kegiatan', 'Bulan', 'Jenjang',
+      'DPP (Rp)', 'PPN 11% (Rp)', 'Total (Rp)', 'Status', 'Bukti'].map(q).join(','));
+
+    var totDpp = 0, totPpn = 0, totAll = 0;
+    rows.forEach(function (t, idx) {
+      var dpp = Number(t.jumlah_rupiah) || 0;
+      var ppn = Math.round(dpp * 0.11);
+      var tot = dpp + ppn;
+      totDpp += dpp; totPpn += ppn; totAll += tot;
+      out.push([
+        q(idx + 1), q(t.kode_anggaran), q(t.nama_kegiatan), q(t.bulan || ''),
+        q(t.jenjang || ''), q(dpp), q(ppn), q(tot),
+        q(t.status_verifikasi || 'pending'), q(t.bukti_url || '')
+      ].join(','));
+    });
+    out.push(['', '', q('TOTAL'), '', '', q(totDpp), q(totPpn), q(totAll), '', ''].join(','));
+
+    return {
+      ok: true,
+      filename: 'Laporan_SPJ_' + (period === '*' ? 'semua' : period) + '.csv',
+      content: out.join('\r\n'),
+      jumlahBaris: rows.length
+    };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  DATA DUMMY untuk uji coba
+ * ========================================================================= */
+
+function _dummyRows(schoolId) {
+  var y = new Date().getFullYear();
+  var samples = [
+    { k: '521211', n: 'Belanja ATK Kantor', j: 850000, b: y + '-1', g: 'SD', s: 'verified' },
+    { k: '521211', n: 'Pembelian Kertas HVS', j: 450000, b: y + '-1', g: 'SD', s: 'verified' },
+    { k: '521811', n: 'Konsumsi Rapat Komite', j: 1250000, b: y + '-2', g: 'SMP', s: 'pending' },
+    { k: '522141', n: 'Sewa Sound System', j: 1500000, b: y + '-2', g: 'SMP', s: 'verified' },
+    { k: '523111', n: 'Pemeliharaan Gedung', j: 3500000, b: y + '-3', g: 'SMA/SMK', s: 'pending' },
+    { k: '521211', n: 'Spidol & Penghapus', j: 175000, b: y + '-3', g: 'SD', s: 'verified' },
+    { k: '524111', n: 'Perjalanan Dinas Lomba', j: 2000000, b: y + '-4', g: 'SMA/SMK', s: 'pending' },
+    { k: '521119', n: 'Honor Narasumber', j: 900000, b: y + '-4', g: 'SMP', s: 'verified' }
+  ];
+  return samples.map(function (r) {
+    return {
+      id_transaksi: _genTrxId(), kode_anggaran: r.k, nama_kegiatan: r.n,
+      jumlah_rupiah: r.j, timestamp: new Date().toISOString(),
+      status_verifikasi: r.s, school_id: schoolId, bulan: r.b, jenjang: r.g
+    };
+  });
+}
+
+function apiSeedDummy(payload) {
+  try {
+    var schoolId = _resolveSchoolId(payload);
+    var rows = _dummyRows(schoolId);
+    var n = 0;
+    rows.forEach(function (r) { if (Database.insert('Data_Transaksi', r)) n++; });
+    return { ok: true, inserted: n };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+// Bisa dijalankan langsung dari editor Apps Script (pilih fungsi -> Run).
+function seedDummyData() {
+  var schoolId = Database.ensureDefaultSchool();
+  var res = apiSeedDummy({ schoolId: schoolId });
+  Logger.log('Dummy inserted: ' + JSON.stringify(res));
+  return res;
 }

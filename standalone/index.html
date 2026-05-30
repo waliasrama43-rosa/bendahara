@@ -175,6 +175,7 @@
         <button data-page="rkkal"><span class="ico">&#43;</span> Input / Upload RKKAL</button>
         <button data-page="rab"><span class="ico">&#9776;</span> RAB Bulanan</button>
         <button data-page="transaksi"><span class="ico">&#9783;</span> Lihat Transaksi</button>
+        <button data-page="pajak"><span class="ico">&#37;</span> Kalkulator Pajak</button>
         <button data-page="export"><span class="ico">&#8595;</span> Export Laporan</button>
         <button data-page="pengaturan"><span class="ico">&#9881;</span> Pengaturan Sekolah</button>
       </nav>
@@ -297,6 +298,7 @@
       rab:        { title:'RAB Bulanan', sub:'Rekap anggaran per kode anggaran tiap bulan' },
       transaksi:  { title:'Lihat Transaksi', sub:'Daftar seluruh transaksi & verifikasi' },
       export:     { title:'Export Laporan', sub:'Unduh laporan SPJ dalam format Excel' },
+      pajak:      { title:'Kalkulator Pajak', sub:'Hitung PPN & PPh (Pasal 22/23/21)' },
       pengaturan: { title:'Pengaturan Sekolah', sub:'Profil & identitas sekolah' }
     };
 
@@ -314,6 +316,7 @@
       else if (page === 'rkkal') renderRKKAL();
       else if (page === 'rab') renderRAB();
       else if (page === 'transaksi') renderTransaksi();
+      else if (page === 'pajak') renderPajak();
       else if (page === 'export') renderExport();
       else if (page === 'pengaturan') renderPengaturan();
     }
@@ -626,7 +629,12 @@
           ? '<button class="btn ok tiny" onclick="verifyTrx(\''+t.id+'\',\'approve\')">Setujui</button> ' +
             '<button class="btn no tiny" onclick="verifyTrx(\''+t.id+'\',\'reject\')">Tolak</button> '
           : '';
+        var buktiBtn = t.buktiUrl
+          ? '<a class="btn ok tiny" href="'+t.buktiUrl+'" target="_blank">Lihat Bukti</a> '
+          : '<button class="btn ghost tiny" onclick="buktiTrx(\''+t.id+'\')">Upload Bukti</button> ';
         var actions = verifyBtns +
+          '<button class="btn ghost tiny" onclick="kwitansiTrx(\''+t.id+'\')">Kwitansi</button> ' +
+          buktiBtn +
           '<button class="btn ghost tiny" onclick="editTrx(\''+t.id+'\')">Edit</button> ' +
           '<button class="btn no tiny" onclick="deleteTrx(\''+t.id+'\')">Hapus</button>';
         return '<tr>' +
@@ -697,33 +705,171 @@
     }
     function closeModal(){ document.getElementById('modal').classList.remove('show'); }
 
-    /* ===================== Export ===================== */
-    function renderExport(){
+    /* ===================== Kwitansi & Bukti ===================== */
+    function terbilang(n){
+      n = Math.floor(Math.abs(Number(n)||0));
+      var sat = ['','satu','dua','tiga','empat','lima','enam','tujuh','delapan','sembilan','sepuluh','sebelas'];
+      function w(x){
+        if (x < 12) return sat[x];
+        if (x < 20) return w(x-10)+' belas';
+        if (x < 100) return w(Math.floor(x/10))+' puluh'+(x%10? ' '+w(x%10):'');
+        if (x < 200) return 'seratus'+(x-100? ' '+w(x-100):'');
+        if (x < 1000) return w(Math.floor(x/100))+' ratus'+(x%100? ' '+w(x%100):'');
+        if (x < 2000) return 'seribu'+(x-1000? ' '+w(x-1000):'');
+        if (x < 1000000) return w(Math.floor(x/1000))+' ribu'+(x%1000? ' '+w(x%1000):'');
+        if (x < 1000000000) return w(Math.floor(x/1000000))+' juta'+(x%1000000? ' '+w(x%1000000):'');
+        return w(Math.floor(x/1000000000))+' miliar'+(x%1000000000? ' '+w(x%1000000000):'');
+      }
+      if (n===0) return 'nol';
+      var s = w(n);
+      while (s.indexOf('  ')>=0) s = s.split('  ').join(' ');
+      return s.trim();
+    }
+    function kwitansiTrx(id){
+      var t = findTrx(id); if(!t) return;
+      var sekolah = STATE.schoolName || 'Sekolah';
+      var jml = Number(t.jumlah)||0;
+      var terb = terbilang(jml); terb = terb.charAt(0).toUpperCase()+terb.slice(1)+' rupiah';
+      var no = 'KW/'+String(t.id||'').slice(-6)+'/'+(t.bulan||'');
+      var html = '<!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><title>Kwitansi</title>' +
+        '<style>body{font-family:Arial,sans-serif;padding:30px;color:#111}.kw{max-width:640px;margin:auto;border:2px solid #111;padding:24px;border-radius:8px}' +
+        'h2{text-align:center;margin:0}.c{text-align:center}.muted{color:#555}.row{display:flex;margin:9px 0}.row .l{width:160px;color:#444}' +
+        '.box{border:1px solid #111;padding:6px 12px;border-radius:6px;background:#f6f6f6;display:inline-block;font-style:italic}' +
+        '.amt{border:1px solid #111;padding:6px 12px;border-radius:6px;display:inline-block;font-weight:bold}' +
+        '.ttd{margin-top:42px;text-align:right;line-height:1.5}@media print{.noprint{display:none}}</style></head><body>' +
+        '<div class="kw"><h2>KWITANSI</h2><p class="c muted">'+esc(sekolah)+'</p><hr>' +
+        '<div class="row"><div class="l">No. Kwitansi</div><div>: '+esc(no)+'</div></div>' +
+        '<div class="row"><div class="l">Telah dibayarkan</div><div>: untuk keperluan di bawah ini</div></div>' +
+        '<div class="row"><div class="l">Terbilang</div><div>: <span class="box">'+esc(terb)+'</span></div></div>' +
+        '<div class="row"><div class="l">Untuk pembayaran</div><div>: '+esc(t.nama)+' (Kode '+esc(t.kode)+')</div></div>' +
+        '<div class="row"><div class="l">Jenjang / Bulan</div><div>: '+esc(t.jenjang||'-')+' / '+esc(bulanLabel(t.bulan))+'</div></div>' +
+        '<div class="row"><div class="l">Jumlah</div><div>: <span class="amt">'+rupiah(jml)+'</span></div></div>' +
+        '<div class="ttd">'+esc(sekolah)+', '+fmtDate(t.timestamp)+'<br>Bendahara,<br><br><br>( .............................. )</div>' +
+        '<div class="noprint c" style="margin-top:22px"><button onclick="window.print()" style="padding:9px 18px;font-size:14px;cursor:pointer">Cetak / Simpan PDF</button></div>' +
+        '</div></body></html>';
+      var win = window.open('', '_blank');
+      if (!win){ toast('Popup diblokir. Izinkan popup untuk mencetak kwitansi.', 'err'); return; }
+      win.document.open(); win.document.write(html); win.document.close();
+    }
+    function buktiTrx(id){
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,application/pdf';
+      input.onchange = function(){
+        var f = input.files[0]; if(!f) return;
+        if (f.size > 5*1024*1024){ toast('Ukuran file maksimal 5 MB.', 'err'); return; }
+        var reader = new FileReader();
+        reader.onload = function(ev){
+          var base64 = String(ev.target.result).split(',')[1] || '';
+          toast('Mengunggah bukti...');
+          gcall('apiUploadBukti', { id:id, filename:f.name, mimeType:f.type, dataBase64:base64 }).then(function(res){
+            if (!res || !res.ok) throw new Error((res&&res.error)||'Gagal');
+            toast('Bukti berhasil diunggah.', 'ok'); loadTransaksi();
+          }).catch(function(err){ toast('Gagal: '+err.message, 'err'); });
+        };
+        reader.readAsDataURL(f);
+      };
+      input.click();
+    }
+
+    /* ===================== Kalkulator Pajak ===================== */
+    function parseRupiahJS(v){ var s=String(v==null?'':v), o=''; for(var i=0;i<s.length;i++){ var ch=s.charAt(i); if(ch>='0'&&ch<='9') o+=ch; } return parseInt(o,10)||0; }
+    function renderPajak(){
       var c = document.getElementById('content');
       c.innerHTML =
         '<div class="panel">' +
-          '<h2>Export Laporan SPJ</h2>' +
-          '<p class="desc">Unduh rekap transaksi sebagai file CSV (kompatibel Excel).</p>' +
-          '<div class="row-actions">' +
-            '<button class="btn primary" id="expBtn">&#8595; Unduh CSV Transaksi</button>' +
+          '<h2>Kalkulator Pajak Belanja</h2>' +
+          '<p class="desc">Hitung PPN & PPh untuk belanja barang/jasa/honor. Default PPN 11%.</p>' +
+          '<div class="grid2">' +
+            '<div class="field"><label>Nilai (Rp)</label><input id="pjNilai" class="num" inputmode="numeric" placeholder="0"></div>' +
+            '<div class="field"><label>Nilai tersebut</label><select id="pjMode"><option value="dpp">Belum termasuk PPN (DPP)</option><option value="incl">Sudah termasuk PPN</option></select></div>' +
+            '<div class="field"><label>Jenis Belanja</label><select id="pjJenis"><option value="barang">Barang (PPh Pasal 22)</option><option value="jasa">Jasa (PPh Pasal 23)</option><option value="honor">Honorarium (PPh Pasal 21)</option><option value="none">Tanpa PPh</option></select></div>' +
+            '<div class="field"><label>Tarif PPN (%)</label><input id="pjPpn" class="num" inputmode="numeric" value="11"></div>' +
           '</div>' +
-          '<div class="hint" style="margin-top:14px">Untuk ekspor format .xlsx baku, gunakan endpoint <span class="mono">?action=export_excel</span> dari sisi server (Apps Script).</div>' +
+          '<div class="field"><label style="font-weight:600"><input type="checkbox" id="pjNpwp" checked style="width:auto;margin-right:7px;vertical-align:middle">Rekanan ber-NPWP <span class="muted">(tanpa NPWP, tarif PPh lebih tinggi)</span></label></div>' +
+          '<div id="pjResult"></div>' +
+        '</div>';
+      ['pjNilai','pjMode','pjJenis','pjPpn','pjNpwp'].forEach(function(id){
+        var el = document.getElementById(id);
+        el.addEventListener('input', hitungPajak);
+        el.addEventListener('change', hitungPajak);
+      });
+      hitungPajak();
+    }
+    function hitungPajak(){
+      var nilai = parseRupiahJS(document.getElementById('pjNilai').value);
+      var mode = document.getElementById('pjMode').value;
+      var jenis = document.getElementById('pjJenis').value;
+      var ppnRate = (parseFloat(document.getElementById('pjPpn').value)||0)/100;
+      var npwp = document.getElementById('pjNpwp').checked;
+      var dpp = mode==='incl' ? Math.round(nilai/(1+ppnRate)) : nilai;
+      var ppn = Math.round(dpp*ppnRate);
+      var pphRate = 0, pphLabel = 'Tanpa PPh';
+      if (jenis==='barang'){ pphRate = npwp?0.015:0.03; pphLabel='PPh Pasal 22 ('+(npwp?'1,5':'3')+'%)'; }
+      else if (jenis==='jasa'){ pphRate = npwp?0.02:0.04; pphLabel='PPh Pasal 23 ('+(npwp?'2':'4')+'%)'; }
+      else if (jenis==='honor'){ pphRate = npwp?0.05:0.06; pphLabel='PPh Pasal 21 ('+(npwp?'5':'6')+'%)'; }
+      var pph = Math.round(dpp*pphRate);
+      var bruto = dpp+ppn;
+      var dibayar = bruto - pph;
+      document.getElementById('pjResult').innerHTML =
+        '<table>' +
+          '<tr><td>Dasar Pengenaan Pajak (DPP)</td><td class="num">'+rupiah(dpp)+'</td></tr>' +
+          '<tr><td>PPN ('+(ppnRate*100)+'%)</td><td class="num">'+rupiah(ppn)+'</td></tr>' +
+          '<tr><td>'+pphLabel+' (dipotong)</td><td class="num">- '+rupiah(pph)+'</td></tr>' +
+          '<tr><th>Nilai Bruto (DPP + PPN)</th><th class="num">'+rupiah(bruto)+'</th></tr>' +
+          '<tr><th>Dibayar ke rekanan (Bruto - PPh)</th><th class="num">'+rupiah(dibayar)+'</th></tr>' +
+          '<tr><th>Disetor ke negara (PPN + PPh)</th><th class="num">'+rupiah(ppn+pph)+'</th></tr>' +
+        '</table>' +
+        '<div class="hint" style="margin-top:12px">Estimasi. Tarif dapat berbeda sesuai ketentuan terbaru & status NPWP. PPh 21 honorarium memakai tarif sederhana.</div>';
+    }
+
+    /* ===================== Export ===================== */
+    function renderExport(){
+      var c = document.getElementById('content');
+      var now = new Date();
+      var opts = '<option value="*">Semua Periode</option>';
+      for (var m=0;m<12;m++){ var v=now.getFullYear()+'-'+(m+1); opts+='<option value="'+v+'">'+MONTHS[m]+' '+now.getFullYear()+'</option>'; }
+      c.innerHTML =
+        '<div class="panel">' +
+          '<h2>Export Laporan SPJ</h2>' +
+          '<p class="desc">Laporan dirakit di server: kop sekolah, kolom DPP, estimasi PPN 11%, total, status, dan tautan bukti. Unduh sebagai CSV (kompatibel Excel).</p>' +
+          '<div class="grid2">' +
+            '<div class="field"><label>Periode</label><select id="expPeriod">'+opts+'</select></div>' +
+            '<div class="field"><label>Jenjang</label><select id="expJenjang">'+jenjangOptions('','Semua Jenjang')+'</select></div>' +
+          '</div>' +
+          '<div class="row-actions">' +
+            '<button class="btn primary" id="expBtn">&#8595; Unduh Laporan SPJ (CSV)</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="panel">' +
+          '<h2>Data Contoh (untuk uji coba)</h2>' +
+          '<p class="desc">Isi otomatis 8 transaksi contoh (beragam bulan & jenjang) agar Anda bisa langsung menguji export, kwitansi, dan filter.</p>' +
+          '<div class="row-actions">' +
+            '<button class="btn ghost" id="seedBtn">&#43; Isi Data Contoh</button>' +
+          '</div>' +
         '</div>';
       document.getElementById('expBtn').addEventListener('click', function(){
-        gcall('apiGetTransactions', { schoolId: STATE.schoolId }).then(function(res){
+        var btn = this; btn.disabled = true;
+        gcall('apiExportData', { schoolId: STATE.schoolId, period: document.getElementById('expPeriod').value, jenjang: document.getElementById('expJenjang').value }).then(function(res){
+          btn.disabled = false;
           if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
-          if (!res.rows.length){ toast('Belum ada data untuk diekspor.', 'err'); return; }
-          var lines = ['No,Kode Anggaran,Nama Kegiatan,Jumlah,Tanggal,Status'];
-          res.rows.forEach(function(t,i){
-            lines.push([i+1, t.kode, '"'+String(t.nama).replace(/"/g,'""')+'"', t.jumlah, fmtDate(t.timestamp), t.status].join(','));
-          });
-          var blob = new Blob([lines.join('\n')], {type:'text/csv'});
+          if (!res.jumlahBaris){ toast('Belum ada data untuk filter ini.', 'err'); return; }
+          var blob = new Blob(['\ufeff'+res.content], {type:'text/csv;charset=utf-8;'});
           var a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = 'laporan_transaksi.csv';
+          a.download = res.filename || 'laporan_spj.csv';
           document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          toast('Laporan diunduh.', 'ok');
-        }).catch(function(err){ toast('Gagal: ' + err.message, 'err'); });
+          toast(res.jumlahBaris + ' baris diekspor.', 'ok');
+        }).catch(function(err){ btn.disabled=false; toast('Gagal: ' + err.message, 'err'); });
+      });
+      document.getElementById('seedBtn').addEventListener('click', function(){
+        if (!confirm('Tambahkan 8 transaksi contoh ke data Anda?')) return;
+        var btn = this; btn.disabled = true;
+        gcall('apiSeedDummy', { schoolId: STATE.schoolId }).then(function(res){
+          btn.disabled = false;
+          if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+          toast(res.inserted + ' data contoh ditambahkan.', 'ok');
+        }).catch(function(err){ btn.disabled=false; toast('Gagal: ' + err.message, 'err'); });
       });
     }
 

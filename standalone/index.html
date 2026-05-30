@@ -293,13 +293,29 @@
     function monthOptions(sel){
       var now = new Date(); var cy = now.getFullYear();
       var cur = sel || (cy + '-' + (now.getMonth()+1));
+      var vals = [];
+      for (var y = cy-2; y <= cy+1; y++){ for (var m=1;m<=12;m++){ vals.push(y+'-'+m); } }
+      // Pastikan nilai tersimpan selalu tampil (hindari fallback ke opsi pertama).
+      if (cur && vals.indexOf(cur) === -1) vals.unshift(cur);
       var html = '';
-      for (var y = cy-1; y <= cy+1; y++){
-        for (var m=1;m<=12;m++){
-          var v = y + '-' + m;
-          html += '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+MONTHS[m-1]+' '+y+'</option>';
-        }
+      for (var i=0;i<vals.length;i++){
+        var v = vals[i];
+        html += '<option value="'+v+'"'+(v===cur?' selected':'')+'>'+bulanLabel(v)+'</option>';
       }
+      return html;
+    }
+    // Daftar periode unik (YYYY-M) yang BENAR-BENAR ada di data, urut terbaru dulu.
+    function cmpPeriod(a,b){ var pa=String(a).split('-'),pb=String(b).split('-'); return ((+pa[0])-(+pb[0]))||((+pa[1])-(+pb[1])); }
+    function distinctPeriods(){
+      var set = {};
+      TRX_ALL.forEach(function(t){ var p = t.bulan ? String(t.bulan) : trxPeriodOf(t.timestamp); if(p) set[p]=true; });
+      var arr = Object.keys(set);
+      arr.sort(function(a,b){ return cmpPeriod(b,a); });
+      return arr;
+    }
+    function periodFilterOptions(){
+      var html = '<option value="*">Semua Periode</option>';
+      distinctPeriods().forEach(function(p){ html += '<option value="'+p+'">'+bulanLabel(p)+'</option>'; });
       return html;
     }
     function jenjangOptions(sel, firstLabel){
@@ -636,8 +652,16 @@
       gcall('apiGetTransactions', { schoolId: STATE.schoolId }).then(function(res){
         if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal memuat');
         TRX_ALL = res.rows || [];
+        rebuildTrxPeriod();
         renderTrxTable();
       }).catch(function(err){ box.innerHTML = '<div class="empty">Gagal: '+esc(err.message)+'</div>'; });
+    }
+    function rebuildTrxPeriod(){
+      var sel = document.getElementById('trxPeriod'); if(!sel) return;
+      var cur = sel.value || '*';
+      sel.innerHTML = periodFilterOptions();
+      sel.value = cur;
+      if (sel.value !== cur) sel.value = '*';
     }
     function trxPeriodOf(ts){ if(!ts) return ''; var d=new Date(ts); if(isNaN(d.getTime())) return ''; return d.getFullYear()+'-'+(d.getMonth()+1); }
     function findTrx(id){ for(var i=0;i<TRX_ALL.length;i++){ if(TRX_ALL[i].id===id) return TRX_ALL[i]; } return null; }
@@ -937,6 +961,10 @@
         }).catch(function(err){ btn.disabled=false; toast('Gagal: ' + err.message, 'err'); });
       });
       document.getElementById('cetakBtn').addEventListener('click', cetakLaporan);
+      // Lengkapi opsi periode export dari bulan yang benar-benar ada di data.
+      gcall('apiGetTransactions', { schoolId: STATE.schoolId }).then(function(res){
+        if (res && res.ok){ TRX_ALL = res.rows || []; var sp=document.getElementById('expPeriod'); if(sp){ var cur=sp.value; sp.innerHTML=periodFilterOptions(); sp.value=cur; } }
+      }).catch(function(){});
       var sb = document.getElementById('seedBtn');
       if (sb) sb.addEventListener('click', function(){
         if (!confirm('Tambahkan 8 transaksi contoh ke data Anda?')) return;

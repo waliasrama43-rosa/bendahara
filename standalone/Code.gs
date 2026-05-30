@@ -72,7 +72,7 @@ var Database = {
       'ID_Transaksi', 'Kode_Anggaran', 'Nama_Kegiatan', 'Jumlah_Rupiah',
       'Timestamp', 'Status_Verifikasi', 'School_ID', 'Kode_Program',
       'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan',
-      'Bulan', 'Jenjang', 'Bukti_URL'
+      'Bulan', 'Jenjang', 'Bukti_URL', 'Nama_Toko', 'Satuan'
     ],
     Data_Sekolah: [
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
@@ -388,6 +388,15 @@ function _parseRupiah(val) {
   for (var i = 0; i < s.length; i++) { var ch = s.charAt(i); if (ch >= '0' && ch <= '9') cleaned += ch; }
   return parseInt(cleaned, 10) || 0;
 }
+
+// Parse angka volume (boleh desimal, mis. "36" atau "36,5"). Koma dianggap desimal.
+function _parseNum(val) {
+  if (typeof val === 'number') return val;
+  var s = String(val == null ? '' : val).trim(), t = '';
+  for (var i = 0; i < s.length; i++) { var ch = s.charAt(i); if (ch >= '0' && ch <= '9') t += ch; else if (ch === '.' || ch === ',') t += '.'; }
+  var n = parseFloat(t);
+  return isNaN(n) ? 0 : n;
+}
 function _splitCsvLine(line) {
   var result = [], cur = '', inQuotes = false;
   for (var i = 0; i < line.length; i++) {
@@ -478,7 +487,11 @@ function apiGetTransactions(payload) {
         status: String(t.status_verifikasi || 'pending'),
         bulan: t.bulan ? String(t.bulan) : '',
         jenjang: t.jenjang ? String(t.jenjang) : '',
-        bukti: _parseBukti(t.bukti_url)
+        bukti: _parseBukti(t.bukti_url),
+        namaToko: t.nama_toko ? String(t.nama_toko) : '',
+        satuan: t.satuan ? String(t.satuan) : '',
+        volume: Number(t.kuantitas) || 0,
+        hargaSatuan: Number(t.harga_satuan) || 0
       };
     });
     rows.reverse();
@@ -497,14 +510,20 @@ function apiSaveManualRows(payload) {
     rows.forEach(function (r) {
       var kode = (r.kodeAnggaran || '').toString().trim();
       var nama = (r.namaKegiatan || '').toString().trim();
-      var jumlah = _parseRupiah(r.jumlahRupiah);
+      var toko = (r.namaToko || '').toString().trim();
+      var satuan = (r.satuan || '').toString().trim();
+      var volume = _parseNum(r.volume);
+      var harga = _parseRupiah(r.hargaSatuan);
+      // Jumlah = volume x harga jika tersedia; jika tidak, pakai input jumlah.
+      var jumlah = (volume > 0 && harga > 0) ? Math.round(volume * harga) : _parseRupiah(r.jumlahRupiah);
       if (!kode && !nama && !jumlah) return;
       if (!kode || !nama || jumlah <= 0) { skipped++; return; }
       var ok = Database.insert('Data_Transaksi', {
         id_transaksi: _genTrxId(), kode_anggaran: kode, nama_kegiatan: nama,
         jumlah_rupiah: jumlah, timestamp: new Date().toISOString(),
         status_verifikasi: 'pending', school_id: schoolId,
-        bulan: bulan, jenjang: jenjang
+        bulan: bulan, jenjang: jenjang,
+        nama_toko: toko, satuan: satuan, kuantitas: volume || '', harga_satuan: harga || ''
       });
       if (ok) saved++; else failed++;
     });
@@ -574,10 +593,16 @@ function apiUpdateTransaction(payload) {
     var patch = {};
     if (payload.kodeAnggaran !== undefined) patch.kode_anggaran = String(payload.kodeAnggaran).trim();
     if (payload.namaKegiatan !== undefined) patch.nama_kegiatan = String(payload.namaKegiatan).trim();
-    if (payload.jumlahRupiah !== undefined) patch.jumlah_rupiah = _parseRupiah(payload.jumlahRupiah);
+    if (payload.namaToko !== undefined) patch.nama_toko = String(payload.namaToko).trim();
+    if (payload.satuan !== undefined) patch.satuan = String(payload.satuan).trim();
+    if (payload.volume !== undefined) patch.kuantitas = _parseNum(payload.volume);
+    if (payload.hargaSatuan !== undefined) patch.harga_satuan = _parseRupiah(payload.hargaSatuan);
+    var vv = patch.kuantitas, hh = patch.harga_satuan;
+    if (vv > 0 && hh > 0) patch.jumlah_rupiah = Math.round(vv * hh);
+    else if (payload.jumlahRupiah !== undefined) patch.jumlah_rupiah = _parseRupiah(payload.jumlahRupiah);
     if (payload.bulan !== undefined) patch.bulan = _normalizeBulan(payload.bulan);
     if (payload.jenjang !== undefined) patch.jenjang = _normalizeJenjang(payload.jenjang);
-    if (!patch.kode_anggaran && payload.kodeAnggaran !== undefined) return { ok: false, error: 'Kode anggaran tidak boleh kosong.' };
+    if (payload.kodeAnggaran !== undefined && !patch.kode_anggaran) return { ok: false, error: 'Kode anggaran tidak boleh kosong.' };
     if (patch.nama_kegiatan === '' ) return { ok: false, error: 'Nama kegiatan tidak boleh kosong.' };
     var ok = Database.updateTransactionFields(payload.id, patch);
     return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
@@ -899,4 +924,97 @@ function apiLogout(payload) {
     if (payload && payload.token) CacheService.getScriptCache().remove('sess_' + payload.token);
   } catch (e) {}
   return { ok: true };
+}
+
+
+
+/* =========================================================================
+ *  EXPORT REKAP (format bendahara: NAMA TOKO, URAIAN MAK, dst + TERBILANG)
+ * ========================================================================= */
+
+var _BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+function _periodLabelID(period) {
+  var p = String(period || '').split('-');
+  var y = parseInt(p[0], 10);
+  var m = parseInt(p[1], 10);
+  return {
+    tahun: (y >= 2000 && y <= 2100) ? y : '',
+    bulan: (m >= 1 && m <= 12) ? _BULAN_ID[m - 1] : ''
+  };
+}
+
+// Terbilang (server) — angka bulat ke kata bahasa Indonesia.
+function _terbilang(n) {
+  n = Math.floor(Math.abs(Number(n) || 0));
+  var sat = ['', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan', 'sepuluh', 'sebelas'];
+  function w(x) {
+    if (x < 12) return sat[x];
+    if (x < 20) return w(x - 10) + ' belas';
+    if (x < 100) return w(Math.floor(x / 10)) + ' puluh' + (x % 10 ? ' ' + w(x % 10) : '');
+    if (x < 200) return 'seratus' + (x - 100 ? ' ' + w(x - 100) : '');
+    if (x < 1000) return w(Math.floor(x / 100)) + ' ratus' + (x % 100 ? ' ' + w(x % 100) : '');
+    if (x < 2000) return 'seribu' + (x - 1000 ? ' ' + w(x - 1000) : '');
+    if (x < 1000000) return w(Math.floor(x / 1000)) + ' ribu' + (x % 1000 ? ' ' + w(x % 1000) : '');
+    if (x < 1000000000) return w(Math.floor(x / 1000000)) + ' juta' + (x % 1000000 ? ' ' + w(x % 1000000) : '');
+    return w(Math.floor(x / 1000000000)) + ' miliar' + (x % 1000000000 ? ' ' + w(x % 1000000000) : '');
+  }
+  if (n === 0) return 'nol';
+  var s = w(n);
+  while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
+  return s.trim();
+}
+
+/**
+ * Export REKAP sesuai format bendahara.
+ * Kolom: NO, NAMA TOKO, URAIAN MAK (Akun belanja), URAIAN PEMBAYARAN,
+ *        TAHUN ANGGARAN, BULAN PELAKSANAAN, VOLUME, SATUAN, JUMLAH, TERBILANG.
+ * payload = { schoolId, period, jenjang }
+ */
+function apiExportRekap(payload) {
+  try {
+    payload = payload || {};
+    var schoolId = _resolveSchoolId(payload);
+    var period = payload.period || '*';
+    var jenjang = _normalizeJenjang(payload.jenjang);
+
+    var rows = Database.getTransactionsBySchool(schoolId, period).filter(function (t) {
+      if (jenjang && String(t.jenjang || '') !== jenjang) return false;
+      return true;
+    });
+
+    function q(s) { return '"' + String(s == null ? '' : s).split('"').join('""') + '"'; }
+
+    var header = ['NO', 'NAMA TOKO', 'URAIAN MAK (Akun belanja)', 'URAIAN PEMBAYARAN',
+      'TAHUN ANGGARAN', 'BULAN PELAKSANAAN', 'VOLUME', 'SATUAN', 'JUMLAH', 'TERBILANG'];
+    var out = [header.map(q).join(',')];
+    var total = 0;
+
+    rows.forEach(function (t, idx) {
+      var jumlah = Number(t.jumlah_rupiah) || 0;
+      total += jumlah;
+      var lbl = _periodLabelID(t.bulan);
+      var vol = Number(t.kuantitas) || '';
+      out.push([
+        q(idx + 1),
+        q(t.nama_toko || ''),
+        q(t.kode_anggaran || ''),
+        q(t.nama_kegiatan || ''),
+        q(lbl.tahun),
+        q(lbl.bulan),
+        q(vol),
+        q(t.satuan || ''),
+        q(jumlah),
+        q(_terbilang(jumlah) + ' rupiah')
+      ].join(','));
+    });
+    out.push(['', '', '', '', '', '', '', q('TOTAL'), q(total), ''].join(','));
+
+    return {
+      ok: true,
+      filename: 'Rekap_' + (period === '*' ? 'semua' : period) + '.csv',
+      content: out.join('\r\n'),
+      jumlahBaris: rows.length
+    };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }

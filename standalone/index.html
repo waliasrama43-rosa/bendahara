@@ -432,16 +432,20 @@
               '<div class="field"><label>Bulan</label><select id="manualBulan">'+monthOptions()+'</select></div>' +
               '<div class="field"><label>Jenjang</label><select id="manualJenjang">'+jenjangOptions('','(pilih jenjang)')+'</select></div>' +
             '</div>' +
-            '<table>' +
+            '<div style="overflow-x:auto"><table style="min-width:820px">' +
               '<thead><tr>' +
-                '<th style="width:36px">#</th>' +
-                '<th style="width:22%">Kode Anggaran</th>' +
-                '<th>Nama Kegiatan</th>' +
-                '<th style="width:22%">Jumlah (Rp)</th>' +
-                '<th style="width:48px"></th>' +
+                '<th style="width:30px">#</th>' +
+                '<th>Kode Akun (MAK)</th>' +
+                '<th>Uraian Pembayaran</th>' +
+                '<th>Nama Toko</th>' +
+                '<th style="width:64px">Vol</th>' +
+                '<th style="width:80px">Satuan</th>' +
+                '<th>Harga Satuan</th>' +
+                '<th>Jumlah (auto)</th>' +
+                '<th style="width:40px"></th>' +
               '</tr></thead>' +
               '<tbody id="manualBody"></tbody>' +
-            '</table>' +
+            '</table></div>' +
             '<div class="row-actions">' +
               '<button class="btn ghost" id="addRowBtn">&#43; Tambah Baris</button>' +
               '<button class="btn primary" id="saveManualBtn">&#128190; Simpan Semua</button>' +
@@ -516,15 +520,24 @@
     }
 
     var manualRowCount = 0;
+    function parseVolJS(v){ var s=String(v==null?'':v), o='', dot=false; for(var i=0;i<s.length;i++){ var ch=s.charAt(i); if(ch>='0'&&ch<='9')o+=ch; else if((ch==='.'||ch===',')&&!dot){o+='.';dot=true;} } var n=parseFloat(o); return isNaN(n)?0:n; }
     function addManualRow(){
       manualRowCount++;
       var tr = document.createElement('tr');
       tr.innerHTML =
         '<td class="muted">'+manualRowCount+'</td>' +
-        '<td><input class="m-kode" placeholder="mis. 521211"></td>' +
-        '<td><input class="m-nama" placeholder="Nama kegiatan / uraian"></td>' +
+        '<td><input class="m-kode" placeholder="mis. 521219"></td>' +
+        '<td><input class="m-nama" placeholder="Uraian pembayaran"></td>' +
+        '<td><input class="m-toko" placeholder="Nama toko/rekanan"></td>' +
+        '<td><input class="m-vol num" placeholder="0" inputmode="decimal"></td>' +
+        '<td><input class="m-sat" placeholder="OK/PKT/KEG"></td>' +
+        '<td><input class="m-harga num" placeholder="0" inputmode="numeric"></td>' +
         '<td><input class="m-jumlah num" placeholder="0" inputmode="numeric"></td>' +
         '<td><button class="btn no tiny" title="Hapus baris">&#10005;</button></td>';
+      var vol = tr.querySelector('.m-vol'), harga = tr.querySelector('.m-harga'), jumlah = tr.querySelector('.m-jumlah');
+      function recalc(){ var v=parseVolJS(vol.value), h=parseRupiahJS(harga.value); if(v>0&&h>0) jumlah.value = Math.round(v*h); }
+      vol.addEventListener('input', recalc);
+      harga.addEventListener('input', recalc);
       tr.querySelector('button').addEventListener('click', function(){
         tr.parentNode.removeChild(tr);
         renumberManual();
@@ -543,6 +556,10 @@
         rows.push({
           kodeAnggaran: trs[i].querySelector('.m-kode').value,
           namaKegiatan: trs[i].querySelector('.m-nama').value,
+          namaToko: trs[i].querySelector('.m-toko').value,
+          volume: trs[i].querySelector('.m-vol').value,
+          satuan: trs[i].querySelector('.m-sat').value,
+          hargaSatuan: trs[i].querySelector('.m-harga').value,
           jumlahRupiah: trs[i].querySelector('.m-jumlah').value
         });
       }
@@ -722,18 +739,31 @@
     function editTrx(id){
       var t = findTrx(id); if(!t) return;
       openModal('Edit Transaksi',
-        '<div class="field"><label>Kode Anggaran</label><input id="edKode" value="'+esc(t.kode)+'"></div>' +
-        '<div class="field"><label>Nama Kegiatan</label><input id="edNama" value="'+esc(t.nama)+'"></div>' +
-        '<div class="field"><label>Jumlah (Rp)</label><input id="edJumlah" class="num" inputmode="numeric" value="'+(Number(t.jumlah)||0)+'"></div>' +
+        '<div class="field"><label>Kode Akun (MAK)</label><input id="edKode" value="'+esc(t.kode)+'"></div>' +
+        '<div class="field"><label>Uraian Pembayaran</label><input id="edNama" value="'+esc(t.nama)+'"></div>' +
+        '<div class="field"><label>Nama Toko</label><input id="edToko" value="'+esc(t.namaToko||'')+'"></div>' +
+        '<div class="grid2">' +
+          '<div class="field"><label>Volume</label><input id="edVol" class="num" inputmode="decimal" value="'+(t.volume||'')+'"></div>' +
+          '<div class="field"><label>Satuan</label><input id="edSat" value="'+esc(t.satuan||'')+'"></div>' +
+        '</div>' +
+        '<div class="grid2">' +
+          '<div class="field"><label>Harga Satuan</label><input id="edHarga" class="num" inputmode="numeric" value="'+(t.hargaSatuan||'')+'"></div>' +
+          '<div class="field"><label>Jumlah (Rp)</label><input id="edJumlah" class="num" inputmode="numeric" value="'+(Number(t.jumlah)||0)+'"></div>' +
+        '</div>' +
         '<div class="grid2">' +
           '<div class="field"><label>Bulan</label><select id="edBulan">'+monthOptions(t.bulan)+'</select></div>' +
           '<div class="field"><label>Jenjang</label><select id="edJenjang">'+jenjangOptions(t.jenjang,'(pilih jenjang)')+'</select></div>' +
-        '</div>',
+        '</div>' +
+        '<div class="hint">Jika Volume &amp; Harga Satuan diisi, Jumlah dihitung otomatis (Vol &times; Harga Satuan).</div>',
         function(){
           var patch = {
             id: id,
             kodeAnggaran: document.getElementById('edKode').value,
             namaKegiatan: document.getElementById('edNama').value,
+            namaToko: document.getElementById('edToko').value,
+            volume: document.getElementById('edVol').value,
+            satuan: document.getElementById('edSat').value,
+            hargaSatuan: document.getElementById('edHarga').value,
             jumlahRupiah: document.getElementById('edJumlah').value,
             bulan: document.getElementById('edBulan').value,
             jenjang: document.getElementById('edJenjang').value
@@ -934,7 +964,8 @@
             '<div class="field"><label>Jenjang</label><select id="expJenjang">'+jenjangOptions('','Semua Jenjang')+'</select></div>' +
           '</div>' +
           '<div class="row-actions">' +
-            '<button class="btn primary" id="expBtn">&#8595; Unduh Laporan SPJ (CSV)</button>' +
+            '<button class="btn primary" id="rekapBtn">&#8595; Unduh REKAP (CSV)</button>' +
+            '<button class="btn ghost" id="expBtn">&#8595; Laporan SPJ (CSV)</button>' +
             '<button class="btn ghost" id="cetakBtn">Cetak Laporan (PDF)</button>' +
           '</div>' +
         '</div>' +
@@ -961,6 +992,20 @@
         }).catch(function(err){ btn.disabled=false; toast('Gagal: ' + err.message, 'err'); });
       });
       document.getElementById('cetakBtn').addEventListener('click', cetakLaporan);
+      document.getElementById('rekapBtn').addEventListener('click', function(){
+        var btn = this; btn.disabled = true;
+        gcall('apiExportRekap', { schoolId: STATE.schoolId, period: document.getElementById('expPeriod').value, jenjang: document.getElementById('expJenjang').value }).then(function(res){
+          btn.disabled = false;
+          if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+          if (!res.jumlahBaris){ toast('Belum ada data untuk filter ini.', 'err'); return; }
+          var blob = new Blob(['\ufeff'+res.content], {type:'text/csv;charset=utf-8;'});
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = res.filename || 'rekap.csv';
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          toast(res.jumlahBaris + ' baris rekap diekspor.', 'ok');
+        }).catch(function(err){ btn.disabled=false; toast('Gagal: ' + err.message, 'err'); });
+      });
       // Lengkapi opsi periode export dari bulan yang benar-benar ada di data.
       gcall('apiGetTransactions', { schoolId: STATE.schoolId }).then(function(res){
         if (res && res.ok){ TRX_ALL = res.rows || []; var sp=document.getElementById('expPeriod'); if(sp){ var cur=sp.value; sp.innerHTML=periodFilterOptions(); sp.value=cur; } }

@@ -198,6 +198,47 @@ var Database = {
     }
   },
 
+  updateTransactionFields: function (transactionId, patch) {
+    try {
+      var sheet = this.getSheet('Data_Transaksi');
+      if (!sheet) return false;
+      var data = sheet.getDataRange().getValues();
+      var headers = data[0];
+      var self = this;
+      for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === transactionId) {
+          for (var j = 0; j < headers.length; j++) {
+            var key = self.headerToKey(headers[j]);
+            if (patch[key] !== undefined) sheet.getRange(i + 1, j + 1).setValue(patch[key]);
+          }
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      Logger.log('updateTransactionFields error: ' + error.message);
+      return false;
+    }
+  },
+
+  deleteTransaction: function (transactionId) {
+    try {
+      var sheet = this.getSheet('Data_Transaksi');
+      if (!sheet) return false;
+      var data = sheet.getDataRange().getValues();
+      for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === transactionId) {
+          sheet.deleteRow(i + 1);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      Logger.log('deleteTransaction error: ' + error.message);
+      return false;
+    }
+  },
+
   getTransactionsBySchool: function (schoolId, period) {
     var all = this.readAll('Data_Transaksi');
     var self = this;
@@ -449,6 +490,30 @@ function apiVerifyTransaction(payload) {
     var status = payload.action === 'reject' ? 'rejected' : 'verified';
     var updated = Database.updateTransactionStatus(payload.id, status);
     return updated ? { ok: true, status: status } : { ok: false, error: 'Transaksi tidak ditemukan.' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiUpdateTransaction(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    var patch = {};
+    if (payload.kodeAnggaran !== undefined) patch.kode_anggaran = String(payload.kodeAnggaran).trim();
+    if (payload.namaKegiatan !== undefined) patch.nama_kegiatan = String(payload.namaKegiatan).trim();
+    if (payload.jumlahRupiah !== undefined) patch.jumlah_rupiah = _parseRupiah(payload.jumlahRupiah);
+    if (!patch.kode_anggaran && payload.kodeAnggaran !== undefined) return { ok: false, error: 'Kode anggaran tidak boleh kosong.' };
+    if (patch.nama_kegiatan === '' ) return { ok: false, error: 'Nama kegiatan tidak boleh kosong.' };
+    var ok = Database.updateTransactionFields(payload.id, patch);
+    return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiDeleteTransaction(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    var ok = Database.deleteTransaction(payload.id);
+    return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 

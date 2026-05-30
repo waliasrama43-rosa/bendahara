@@ -276,6 +276,27 @@ var Database = {
   },
 
   /**
+   * Delete a transaction row by id.
+   */
+  deleteTransaction: function (transactionId) {
+    try {
+      var sheet = this.getSheet('Data_Transaksi');
+      if (!sheet) return false;
+      var data = sheet.getDataRange().getValues();
+      for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === transactionId) {
+          sheet.deleteRow(i + 1);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      Logger.log('deleteTransaction error: ' + error.message);
+      return false;
+    }
+  },
+
+  /**
    * Get transactions filtered by school and (optionally) period "YYYY-M".
    * Pass period === '*' or falsy to get all for the school.
    */

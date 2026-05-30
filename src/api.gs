@@ -253,23 +253,42 @@ function apiVerifyTransaction(payload) {
 }
 
 /**
- * Inline edit a single field of a transaction.
- * payload = { id, field, value }
+ * Edit a transaction's editable fields.
+ * payload = { id, kodeAnggaran, namaKegiatan, jumlahRupiah }
  */
 function apiUpdateTransaction(payload) {
   try {
     payload = payload || {};
-    if (!payload.id || !payload.field) return { ok: false, error: 'Data tidak lengkap.' };
-
-    var allowed = ['kode_anggaran', 'nama_kegiatan', 'jumlah_rupiah', 'status_verifikasi'];
-    if (allowed.indexOf(payload.field) === -1) return { ok: false, error: 'Field tidak dapat diedit.' };
-
-    var value = payload.value;
-    if (payload.field === 'jumlah_rupiah') value = _parseRupiah(value);
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
 
     var patch = {};
-    patch[payload.field] = value;
+    if (payload.kodeAnggaran !== undefined) patch.kode_anggaran = String(payload.kodeAnggaran).trim();
+    if (payload.namaKegiatan !== undefined) patch.nama_kegiatan = String(payload.namaKegiatan).trim();
+    if (payload.jumlahRupiah !== undefined) patch.jumlah_rupiah = _parseRupiah(payload.jumlahRupiah);
+
+    if (payload.kodeAnggaran !== undefined && !patch.kode_anggaran) {
+      return { ok: false, error: 'Kode anggaran tidak boleh kosong.' };
+    }
+    if (payload.namaKegiatan !== undefined && !patch.nama_kegiatan) {
+      return { ok: false, error: 'Nama kegiatan tidak boleh kosong.' };
+    }
+
     var ok = Database.updateTransaction(payload.id, patch);
+    return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+/**
+ * Delete a transaction.
+ * payload = { id }
+ */
+function apiDeleteTransaction(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    var ok = Database.deleteTransaction(payload.id);
     return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
   } catch (e) {
     return { ok: false, error: String(e && e.message || e) };

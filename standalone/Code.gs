@@ -71,7 +71,8 @@ var Database = {
     Data_Transaksi: [
       'ID_Transaksi', 'Kode_Anggaran', 'Nama_Kegiatan', 'Jumlah_Rupiah',
       'Timestamp', 'Status_Verifikasi', 'School_ID', 'Kode_Program',
-      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan'
+      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan',
+      'Bulan', 'Jenjang'
     ],
     Data_Sekolah: [
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
@@ -102,7 +103,17 @@ var Database = {
     Object.keys(this.HEADERS).forEach(function (name) {
       var sheet = ss.getSheetByName(name);
       if (!sheet) sheet = ss.insertSheet(name);
-      if (sheet.getLastRow() === 0) sheet.appendRow(self.HEADERS[name]);
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(self.HEADERS[name]);
+      } else {
+        // Self-heal: tambahkan kolom baru yang belum ada di sheet lama.
+        var existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+        var missing = [];
+        self.HEADERS[name].forEach(function (h) { if (existing.indexOf(h) === -1) missing.push(h); });
+        if (missing.length) {
+          sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+        }
+      }
     });
     var def = ss.getSheetByName('Sheet1');
     if (def && ss.getSheets().length > 1 && def.getLastRow() === 0) {
@@ -245,7 +256,8 @@ var Database = {
     return all.filter(function (t) {
       if (schoolId && t.school_id && t.school_id !== schoolId) return false;
       if (!period || period === '*') return true;
-      return self.extractPeriod(t.timestamp) === period;
+      var p = t.bulan ? String(t.bulan) : self.extractPeriod(t.timestamp);
+      return p === period;
     });
   },
 
@@ -377,6 +389,25 @@ function _splitCsvLine(line) {
   return result;
 }
 
+// Bulan disimpan sebagai "YYYY-M" (mis. "2026-3"). Default: bulan berjalan.
+function _normalizeBulan(val) {
+  var s = String(val == null ? '' : val).trim();
+  var parts = s.split('-');
+  var y = parseInt(parts[0], 10);
+  var m = parseInt(parts[1], 10);
+  if (y >= 2000 && y <= 2100 && m >= 1 && m <= 12) return y + '-' + m;
+  var now = new Date();
+  return now.getFullYear() + '-' + (now.getMonth() + 1);
+}
+
+// Jenjang dibatasi: SD, SMP, SMA/SMK.
+function _normalizeJenjang(val) {
+  var s = String(val == null ? '' : val).trim().toUpperCase();
+  if (s === 'SD' || s === 'SMP' || s === 'SMA/SMK') return s;
+  if (s === 'SMA' || s === 'SMK' || s === 'SMA-SMK') return 'SMA/SMK';
+  return '';
+}
+
 /* =========================================================================
  *  API (dipanggil dari UI via google.script.run)
  * ========================================================================= */
@@ -412,7 +443,9 @@ function apiGetTransactions(payload) {
       return {
         id: t.id_transaksi, kode: t.kode_anggaran, nama: t.nama_kegiatan,
         jumlah: Number(t.jumlah_rupiah) || 0, timestamp: t.timestamp,
-        status: String(t.status_verifikasi || 'pending')
+        status: String(t.status_verifikasi || 'pending'),
+        bulan: t.bulan ? String(t.bulan) : '',
+        jenjang: t.jenjang ? String(t.jenjang) : ''
       };
     });
     rows.reverse();
@@ -425,6 +458,8 @@ function apiSaveManualRows(payload) {
     payload = payload || {};
     var schoolId = _resolveSchoolId(payload);
     var rows = payload.rows || [];
+    var bulan = _normalizeBulan(payload.bulan);
+    var jenjang = _normalizeJenjang(payload.jenjang);
     var saved = 0, skipped = 0, failed = 0;
     rows.forEach(function (r) {
       var kode = (r.kodeAnggaran || '').toString().trim();
@@ -435,7 +470,8 @@ function apiSaveManualRows(payload) {
       var ok = Database.insert('Data_Transaksi', {
         id_transaksi: _genTrxId(), kode_anggaran: kode, nama_kegiatan: nama,
         jumlah_rupiah: jumlah, timestamp: new Date().toISOString(),
-        status_verifikasi: 'pending', school_id: schoolId
+        status_verifikasi: 'pending', school_id: schoolId,
+        bulan: bulan, jenjang: jenjang
       });
       if (ok) saved++; else failed++;
     });
@@ -450,6 +486,8 @@ function apiUploadCSV(payload) {
   try {
     payload = payload || {};
     var schoolId = _resolveSchoolId(payload);
+    var bulan = _normalizeBulan(payload.bulan);
+    var jenjang = _normalizeJenjang(payload.jenjang);
     var csv = String(payload.csv || '').trim();
     if (!csv) return { ok: false, error: 'Data CSV kosong.' };
     var lines = csv.split('\r\n').join('\n').split('\r').join('\n').split('\n');
@@ -466,7 +504,8 @@ function apiUploadCSV(payload) {
       Database.insert('Data_Transaksi', {
         id_transaksi: _genTrxId(), kode_anggaran: kode, nama_kegiatan: nama,
         jumlah_rupiah: jumlah, timestamp: new Date().toISOString(),
-        status_verifikasi: 'pending', school_id: schoolId
+        status_verifikasi: 'pending', school_id: schoolId,
+        bulan: bulan, jenjang: jenjang
       });
       processed++;
     }
@@ -502,6 +541,8 @@ function apiUpdateTransaction(payload) {
     if (payload.kodeAnggaran !== undefined) patch.kode_anggaran = String(payload.kodeAnggaran).trim();
     if (payload.namaKegiatan !== undefined) patch.nama_kegiatan = String(payload.namaKegiatan).trim();
     if (payload.jumlahRupiah !== undefined) patch.jumlah_rupiah = _parseRupiah(payload.jumlahRupiah);
+    if (payload.bulan !== undefined) patch.bulan = _normalizeBulan(payload.bulan);
+    if (payload.jenjang !== undefined) patch.jenjang = _normalizeJenjang(payload.jenjang);
     if (!patch.kode_anggaran && payload.kodeAnggaran !== undefined) return { ok: false, error: 'Kode anggaran tidak boleh kosong.' };
     if (patch.nama_kegiatan === '' ) return { ok: false, error: 'Nama kegiatan tidak boleh kosong.' };
     var ok = Database.updateTransactionFields(payload.id, patch);

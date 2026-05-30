@@ -21,7 +21,8 @@ var Database = {
     Data_Transaksi: [
       'ID_Transaksi', 'Kode_Anggaran', 'Nama_Kegiatan', 'Jumlah_Rupiah',
       'Timestamp', 'Status_Verifikasi', 'School_ID', 'Kode_Program',
-      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan'
+      'Kode_Komponen', 'Jenis_Belanja', 'Kuantitas', 'Harga_Satuan',
+      'Bulan', 'Jenjang'
     ],
     Data_Sekolah: [
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
@@ -76,6 +77,14 @@ var Database = {
       }
       if (sheet.getLastRow() === 0) {
         sheet.appendRow(self.HEADERS[name]);
+      } else {
+        // Self-heal: add any new canonical columns missing from an old sheet.
+        var existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+        var missing = [];
+        self.HEADERS[name].forEach(function (h) { if (existing.indexOf(h) === -1) missing.push(h); });
+        if (missing.length) {
+          sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+        }
       }
     });
 
@@ -306,7 +315,8 @@ var Database = {
     return all.filter(function (t) {
       if (schoolId && t.school_id && t.school_id !== schoolId) return false;
       if (!period || period === '*') return true;
-      return self.extractPeriod(t.timestamp) === period;
+      var p = t.bulan ? String(t.bulan) : self.extractPeriod(t.timestamp);
+      return p === period;
     });
   },
 

@@ -3,6 +3,8 @@
  * Inline editing without breaking other rows
  */
 
+var Controller = (typeof Controller !== 'undefined' && Controller) || {};
+
 Controller.Correction = {
   /**
    * Process inline correction

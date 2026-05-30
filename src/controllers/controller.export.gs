@@ -3,6 +3,8 @@
  * One-stop export to Excel format with template tolerance
  */
 
+var Controller = (typeof Controller !== 'undefined' && Controller) || {};
+
 Controller.Export = {
   /**
    * Export data to Excel format

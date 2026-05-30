@@ -6,7 +6,7 @@
  * - Kolom C: Jumlah Rupiah
  */
 
-const Controller = Controller || {};
+var Controller = (typeof Controller !== 'undefined' && Controller) || {};
 
 Controller.RKKAL = {
   Upload: {

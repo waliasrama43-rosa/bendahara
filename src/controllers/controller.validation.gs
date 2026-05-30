@@ -3,6 +3,8 @@
  * Verify transactions and check budget limits
  */
 
+var Controller = (typeof Controller !== 'undefined' && Controller) || {};
+
 Controller.Validation = {
   /**
    * Verify transaction validity

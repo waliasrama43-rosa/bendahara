@@ -15,23 +15,14 @@ const DB_CONFIG = {
 };
 
 /**
- * Initialize database schema with self-healing
+ * Initialize database schema with self-healing.
+ *
+ * Delegates to Database.init() which persists the spreadsheet id in Script
+ * Properties and opens it by id. (Apps Script has no `openByName`.)
  */
 function initDatabase() {
   try {
-    // Check if spreadsheet exists
-    let ss = SpreadsheetApp.openByName(DB_CONFIG.SPREADSHEET_NAME);
-    
-    // Auto-create if missing
-    if (!ss) {
-      ss = SpreadsheetApp.create(DB_CONFIG.SPREADSHEET_NAME);
-      
-      // Auto-create sheets with headers
-      createAllSheetsWithHeaders(ss);
-    }
-    
-    return ss;
-    
+    return Database.init();
   } catch (error) {
     Logger.log('Database init error: ' + error.message);
     return null;

@@ -79,7 +79,8 @@ var Database = {
       'Bendahara', 'Status_Aktif', 'Tanggal_Daftar', 'Plan_Type'
     ],
     System_Logs: ['Log_ID', 'Timestamp', 'Level', 'Module', 'Message', 'Details'],
-    Users: ['Username', 'PasswordHash', 'Role', 'Nama', 'Status']
+    Users: ['Username', 'PasswordHash', 'Role', 'Nama', 'Status'],
+    Data_Pagu: ['Pagu_ID', 'School_ID', 'Tahun', 'Kode_Output', 'Kode_Kegiatan', 'Kode_Komponen', 'Kode_Akun', 'Uraian', 'Volume', 'Satuan', 'Harga_Satuan', 'Pagu']
   },
 
   init: function () {
@@ -1017,4 +1018,191 @@ function apiExportRekap(payload) {
       jumlahBaris: rows.length
     };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+
+
+/* =========================================================================
+ *  TAHAP 1: PAGU / RKKAL  +  REALISASI
+ * ========================================================================= */
+
+function _digitsOnly(s){ var o=''; s=String(s); for(var i=0;i<s.length;i++){ var c=s.charAt(i); if(c>='0'&&c<='9') o+=c; } return o; }
+function _looksNumeric(s){ s=String(s).trim(); if(!s) return false; var d=false; for(var i=0;i<s.length;i++){ var c=s.charAt(i); if(c>='0'&&c<='9'){d=true;} else if(c!=='.'&&c!==','&&c!==' '){ return false; } } return d; }
+function _isUnit(s){ s=String(s).trim(); if(!s||s.length>6) return false; for(var i=0;i<s.length;i++){ var c=s.charAt(i); if(!((c>='A'&&c<='Z')||(c>='a'&&c<='z'))) return false; } return true; }
+function _toFloat(s){ var t='',dot=false; s=String(s); for(var i=0;i<s.length;i++){ var c=s.charAt(i); if(c>='0'&&c<='9') t+=c; else if((c==='.'||c===',')&&!dot){ t+='.'; dot=true; } } var n=parseFloat(t); return isNaN(n)?0:n; }
+
+// Klasifikasi kode hierarki RKA-KL: output (7936.101), kegiatan (303),
+// komponen (D, huruf), akun/MAK (521219, 6 digit).
+function _classifyKode(v){
+  v=String(v).trim();
+  if(!v) return null;
+  if(v.indexOf('.')>0){ var j=v.split('.').join(''); if(_digitsOnly(j)===j && j.length>=4) return 'output'; }
+  var dg=_digitsOnly(v);
+  if(dg===v){ if(v.length===6) return 'akun'; if(v.length===3) return 'kegiatan'; return null; }
+  if(v.length===1 && v>='A' && v<='Z') return 'komponen';
+  return null;
+}
+
+function _parsePaguDetail(cells){
+  var c=[]; for(var i=0;i<cells.length;i++) c.push(String(cells[i]).trim());
+  var nums=[]; for(var i=0;i<c.length;i++){ if(_looksNumeric(c[i]) && _digitsOnly(c[i]).length>0) nums.push(i); }
+  if(nums.length<1) return null;
+  var jIdx=nums[nums.length-1];
+  var pagu=parseInt(_digitsOnly(c[jIdx]),10)||0;
+  if(pagu<=0) return null;
+  var hIdx=-1, harga=0;
+  if(nums.length>=2){ hIdx=nums[nums.length-2]; harga=parseInt(_digitsOnly(c[hIdx]),10)||0; }
+  var vol=0, sat='';
+  for(var i=0;i<c.length;i++){
+    if(i===jIdx||i===hIdx) continue;
+    var parts=c[i].split(' ');
+    if(parts.length>=2 && _looksNumeric(parts[0]) && _isUnit(parts[parts.length-1])){ vol=_toFloat(parts[0]); sat=parts[parts.length-1]; break; }
+  }
+  if(!sat){
+    for(var i=0;i<c.length;i++){
+      if(i===jIdx||i===hIdx) continue;
+      if(_isUnit(c[i])){ sat=c[i].trim(); for(var k=i-1;k>=0;k--){ if(_looksNumeric(c[k])){ vol=_toFloat(c[k]); break; } } break; }
+    }
+  }
+  var uraian='';
+  for(var i=0;i<c.length;i++){ if(i===jIdx||i===hIdx) continue; if(_looksNumeric(c[i])||_isUnit(c[i])) continue; if(c[i].length>uraian.length) uraian=c[i]; }
+  return { uraian: uraian, vol: vol, sat: sat, harga: harga, pagu: pagu };
+}
+
+// Parser RKKAL/RAB hasil copy dari Excel (antar-kolom dipisah TAB).
+function _parseRkkalText(text){
+  var lines=String(text||'').split('\r\n').join('\n').split('\r').join('\n').split('\n');
+  var ctx={ output:'', kegiatan:'', komponen:'', akun:'' };
+  var out=[];
+  for(var li=0; li<lines.length; li++){
+    var line=lines[li]; if(!line || !line.trim()) continue;
+    var cells = line.indexOf('\t')>=0 ? line.split('\t') : [line];
+    var first=String(cells[0]||'').trim();
+    var kls=_classifyKode(first);
+    if(kls){ ctx[kls]=first; continue; }
+    var d=_parsePaguDetail(cells);
+    if(d && d.uraian){
+      out.push({ kodeOutput:ctx.output, kodeKegiatan:ctx.kegiatan, kodeKomponen:ctx.komponen, kodeAkun:ctx.akun, uraian:d.uraian, volume:d.vol, satuan:d.sat, harga:d.harga, pagu:d.pagu });
+    }
+  }
+  return out;
+}
+
+function _insertPagu(schoolId, tahun, r){
+  return Database.insert('Data_Pagu', {
+    pagu_id: 'PAGU-' + Date.now() + '-' + Math.random().toString(36).substr(2,5).toUpperCase(),
+    school_id: schoolId, tahun: tahun,
+    kode_output: r.kodeOutput || '', kode_kegiatan: r.kodeKegiatan || '', kode_komponen: r.kodeKomponen || '',
+    kode_akun: r.kodeAkun || '', uraian: r.uraian || '', volume: r.volume || '', satuan: r.satuan || '',
+    harga_satuan: r.harga || '', pagu: r.pagu || 0
+  });
+}
+
+// Import RKKAL via tempel teks (best-effort). payload = { tahun, text }
+function apiImportPaguRKKAL(payload){
+  try{
+    payload = payload || {};
+    var g=_requireBendahara(payload); if(g) return g;
+    var schoolId=_resolveSchoolId(payload);
+    var tahun=String(payload.tahun || new Date().getFullYear());
+    var parsed=_parseRkkalText(payload.text);
+    if(!parsed.length) return { ok:false, error:'Tidak ada baris pagu yang terbaca. Pastikan menyalin dari Excel (antar kolom ter-pisah Tab).' };
+    var n=0; parsed.forEach(function(r){ if(_insertPagu(schoolId, tahun, r)) n++; });
+    return { ok:true, inserted:n, preview: parsed.slice(0,8) };
+  }catch(e){ return { ok:false, error:String(e && e.message || e) }; }
+}
+
+// Simpan baris pagu manual. payload = { tahun, rows:[{kodeAkun,uraian,volume,satuan,harga}] }
+function apiSavePaguRows(payload){
+  try{
+    payload = payload || {};
+    var g=_requireBendahara(payload); if(g) return g;
+    var schoolId=_resolveSchoolId(payload);
+    var tahun=String(payload.tahun || new Date().getFullYear());
+    var rows=payload.rows||[]; var saved=0;
+    rows.forEach(function(r){
+      var kode=(r.kodeAkun||'').toString().trim();
+      var uraian=(r.uraian||'').toString().trim();
+      var vol=_parseNum(r.volume);
+      var harga=_parseRupiah(r.harga);
+      var pagu=(vol>0&&harga>0)?Math.round(vol*harga):_parseRupiah(r.pagu);
+      if(!kode && !uraian && !pagu) return;
+      if(!uraian || pagu<=0) return;
+      if(_insertPagu(schoolId, tahun, { kodeAkun:kode, uraian:uraian, volume:vol, satuan:(r.satuan||'').toString().trim(), harga:harga, pagu:pagu })) saved++;
+    });
+    return { ok:true, saved:saved };
+  }catch(e){ return { ok:false, error:String(e && e.message || e) }; }
+}
+
+function apiGetPagu(payload){
+  try{
+    payload = payload || {};
+    var schoolId=_resolveSchoolId(payload);
+    var tahun=payload.tahun ? String(payload.tahun) : '';
+    var rows=Database.readAll('Data_Pagu').filter(function(p){
+      if(schoolId && p.school_id && p.school_id!==schoolId) return false;
+      if(tahun && String(p.tahun)!==tahun) return false;
+      return true;
+    }).map(function(p){
+      return { id:p.pagu_id, tahun:String(p.tahun||''), kodeAkun:String(p.kode_akun||''), uraian:String(p.uraian||''),
+        volume:Number(p.volume)||0, satuan:String(p.satuan||''), harga:Number(p.harga_satuan)||0, pagu:Number(p.pagu)||0 };
+    });
+    var total=0; rows.forEach(function(r){ total+=r.pagu; });
+    return { ok:true, rows:rows, total:total };
+  }catch(e){ return { ok:false, error:String(e && e.message || e) }; }
+}
+
+function apiClearPagu(payload){
+  try{
+    payload = payload || {};
+    var g=_requireBendahara(payload); if(g) return g;
+    var schoolId=_resolveSchoolId(payload);
+    var tahun=String(payload.tahun||'');
+    var sheet=Database.getSheet('Data_Pagu'); if(!sheet) return { ok:true, deleted:0 };
+    var data=sheet.getDataRange().getValues(); var headers=data[0];
+    var cSchool=headers.indexOf('School_ID'), cTahun=headers.indexOf('Tahun');
+    var deleted=0;
+    for(var i=data.length-1;i>=1;i--){
+      var okSchool=!schoolId || data[i][cSchool]===schoolId;
+      var okTahun=!tahun || String(data[i][cTahun])===tahun;
+      if(okSchool && okTahun){ sheet.deleteRow(i+1); deleted++; }
+    }
+    return { ok:true, deleted:deleted };
+  }catch(e){ return { ok:false, error:String(e && e.message || e) }; }
+}
+
+// Realisasi: Pagu (RKKAL) vs Realisasi (transaksi) vs Saldo, per kode akun.
+function apiGetRealisasi(payload){
+  try{
+    payload = payload || {};
+    var schoolId=_resolveSchoolId(payload);
+    var tahun=String(payload.tahun || new Date().getFullYear());
+
+    var paguMap={};
+    Database.readAll('Data_Pagu').forEach(function(p){
+      if(schoolId && p.school_id && p.school_id!==schoolId) return;
+      if(String(p.tahun)!==tahun) return;
+      var k=String(p.kode_akun||'(tanpa kode)');
+      if(!paguMap[k]) paguMap[k]={ kode:k, uraian:String(p.uraian||''), pagu:0, realisasi:0 };
+      paguMap[k].pagu += Number(p.pagu)||0;
+    });
+
+    Database.getTransactionsBySchool(schoolId, '*').forEach(function(t){
+      var ph=t.bulan ? String(t.bulan).split('-')[0] : (t.timestamp ? String(new Date(t.timestamp).getFullYear()) : '');
+      if(ph!==tahun) return;
+      var k=String(t.kode_anggaran||'(tanpa kode)');
+      if(!paguMap[k]) paguMap[k]={ kode:k, uraian:String(t.nama_kegiatan||''), pagu:0, realisasi:0 };
+      paguMap[k].realisasi += Number(t.jumlah_rupiah)||0;
+    });
+
+    var items=Object.keys(paguMap).map(function(k){
+      var o=paguMap[k]; o.saldo=o.pagu-o.realisasi;
+      o.persen = o.pagu>0 ? Math.round(o.realisasi/o.pagu*1000)/10 : 0;
+      return o;
+    });
+    items.sort(function(a,b){ return b.pagu-a.pagu; });
+    var tot={ pagu:0, realisasi:0, saldo:0 };
+    items.forEach(function(o){ tot.pagu+=o.pagu; tot.realisasi+=o.realisasi; tot.saldo+=o.saldo; });
+    return { ok:true, tahun:tahun, items:items, total:tot };
+  }catch(e){ return { ok:false, error:String(e && e.message || e) }; }
 }

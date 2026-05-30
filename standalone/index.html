@@ -182,8 +182,10 @@
       <nav class="nav" id="nav">
         <button data-page="dashboard" class="active"><span class="ico">&#9632;</span> Dashboard</button>
         <button data-page="rkkal"><span class="ico">&#43;</span> Input / Upload RKKAL</button>
+        <button data-page="pagu"><span class="ico">&#9745;</span> Pagu / RKKAL</button>
         <button data-page="rab"><span class="ico">&#9776;</span> RAB Bulanan</button>
         <button data-page="transaksi"><span class="ico">&#9783;</span> Lihat Transaksi</button>
+        <button data-page="realisasi"><span class="ico">&#931;</span> Realisasi Anggaran</button>
         <button data-page="pajak"><span class="ico">&#37;</span> Kalkulator Pajak</button>
         <button data-page="export"><span class="ico">&#8595;</span> Export Laporan</button>
         <button data-page="pengaturan"><span class="ico">&#9881;</span> Pengaturan Sekolah</button>
@@ -329,6 +331,8 @@
       rkkal:      { title:'Input / Upload RKKAL', sub:'Masukkan rencana anggaran secara manual atau unggah file' },
       rab:        { title:'RAB Bulanan', sub:'Rekap anggaran per kode anggaran tiap bulan' },
       transaksi:  { title:'Lihat Transaksi', sub:'Daftar seluruh transaksi & verifikasi' },
+      pagu:       { title:'Pagu / RKKAL', sub:'Pagu anggaran setahun (acuan) per kode akun' },
+      realisasi:  { title:'Realisasi Anggaran', sub:'Pagu vs Realisasi vs Saldo per kode akun' },
       export:     { title:'Export Laporan', sub:'Unduh laporan SPJ dalam format Excel' },
       pajak:      { title:'Kalkulator Pajak', sub:'Hitung PPN & PPh (Pasal 22/23/21)' },
       pengaturan: { title:'Pengaturan Sekolah', sub:'Profil & identitas sekolah' }
@@ -348,6 +352,8 @@
       else if (page === 'rkkal') renderRKKAL();
       else if (page === 'rab') renderRAB();
       else if (page === 'transaksi') renderTransaksi();
+      else if (page === 'pagu') renderPagu();
+      else if (page === 'realisasi') renderRealisasi();
       else if (page === 'pajak') renderPajak();
       else if (page === 'export') renderExport();
       else if (page === 'pengaturan') renderPengaturan();
@@ -1068,6 +1074,85 @@
         if (!win){ toast('Popup diblokir. Izinkan popup untuk mencetak laporan.','err'); return; }
         win.document.open(); win.document.write(html); win.document.close();
       }).catch(function(err){ toast('Gagal: '+err.message,'err'); });
+    }
+
+    /* ===================== Pagu / RKKAL ===================== */
+    function renderPagu(){
+      var c=document.getElementById('content');
+      var y=new Date().getFullYear();
+      var isBdh = STATE.role==='bendahara';
+      var importPanel = isBdh ? (
+        '<div class="panel"><h2>Import RKKAL (tempel dari Excel)</h2>' +
+        '<p class="desc">Salin baris dari file RKKAL/RAB di Excel lalu tempel (antar kolom otomatis terpisah Tab). Kode hierarki (mis. 521219) terbaca sebagai konteks akun. <b>Beta</b> &mdash; periksa hasilnya, koreksi bila perlu.</p>' +
+        '<div class="grid2"><div class="field"><label>Tahun Anggaran</label><input id="paguTahun" class="num" value="'+y+'"></div><div class="field"></div></div>' +
+        '<div class="field"><label>Tempel data RKKAL di sini</label><textarea id="paguText" placeholder="Tempel dari Excel. Baris kode akun (521219) jadi konteks; baris detail: Uraian | Vol | Sat | Harga | Jumlah"></textarea></div>' +
+        '<div class="row-actions"><button class="btn primary" id="paguImportBtn">&#8593; Import RKKAL</button>' +
+        '<button class="btn no" id="paguClearBtn">Hapus Pagu Tahun Ini</button></div></div>'
+      ) : '';
+      c.innerHTML =
+        '<div class="panel"><h2>Daftar Pagu (RKKAL)</h2>' +
+        '<p class="desc">Pagu anggaran setahun sebagai acuan. Realisasi dihitung otomatis di menu Realisasi.</p>' +
+        '<div class="grid2"><div class="field"><label>Tahun</label><input id="paguViewTahun" class="num" value="'+y+'"></div>' +
+        '<div class="field" style="display:flex;align-items:flex-end"><button class="btn ghost" id="paguLoadBtn">Tampilkan</button></div></div>' +
+        '<div id="paguBox"><div class="empty">Memuat...</div></div></div>' + importPanel;
+      document.getElementById('paguLoadBtn').addEventListener('click', loadPagu);
+      if(isBdh){
+        document.getElementById('paguImportBtn').addEventListener('click', function(){
+          var txt=document.getElementById('paguText').value;
+          if(!txt.trim()){ toast('Tempel data RKKAL dulu.','err'); return; }
+          var btn=this; btn.disabled=true;
+          gcall('apiImportPaguRKKAL',{tahun:document.getElementById('paguTahun').value, text:txt}).then(function(res){
+            btn.disabled=false;
+            if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal');
+            toast(res.inserted+' baris pagu diimpor.','ok');
+            document.getElementById('paguText').value='';
+            document.getElementById('paguViewTahun').value=document.getElementById('paguTahun').value;
+            loadPagu();
+          }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message,'err'); });
+        });
+        document.getElementById('paguClearBtn').addEventListener('click', function(){
+          var th=document.getElementById('paguViewTahun').value;
+          if(!confirm('Hapus SEMUA pagu tahun '+th+'?')) return;
+          gcall('apiClearPagu',{tahun:th}).then(function(res){ if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast((res.deleted||0)+' baris pagu dihapus.','ok'); loadPagu(); }).catch(function(err){ toast('Gagal: '+err.message,'err'); });
+        });
+      }
+      loadPagu();
+    }
+    function loadPagu(){
+      var box=document.getElementById('paguBox'); box.innerHTML='<div class="empty">Memuat...</div>';
+      gcall('apiGetPagu',{tahun:document.getElementById('paguViewTahun').value}).then(function(res){
+        if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal');
+        if(!res.rows.length){ box.innerHTML='<div class="empty">Belum ada pagu untuk tahun ini.</div>'; return; }
+        var rows=res.rows.map(function(p){ return '<tr><td class="mono">'+esc(p.kodeAkun)+'</td><td>'+esc(p.uraian)+'</td><td class="num">'+(p.volume||'')+'</td><td>'+esc(p.satuan)+'</td><td class="num">'+rupiah(p.harga)+'</td><td class="num">'+rupiah(p.pagu)+'</td></tr>'; }).join('');
+        box.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Kode Akun</th><th>Uraian</th><th class="num">Vol</th><th>Sat</th><th class="num">Harga</th><th class="num">Pagu</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><th colspan="5" class="right">TOTAL PAGU</th><th class="num">'+rupiah(res.total)+'</th></tr></tfoot></table></div>';
+      }).catch(function(err){ box.innerHTML='<div class="empty">Gagal: '+esc(err.message)+'</div>'; });
+    }
+
+    /* ===================== Realisasi ===================== */
+    function renderRealisasi(){
+      var c=document.getElementById('content');
+      var y=new Date().getFullYear();
+      c.innerHTML='<div class="panel"><h2>Realisasi Anggaran</h2>' +
+        '<p class="desc">Pagu (RKKAL) vs Realisasi (transaksi) per kode akun. Saldo = Pagu &minus; Realisasi. Saldo minus = melebihi pagu.</p>' +
+        '<div class="grid2"><div class="field"><label>Tahun</label><input id="realTahun" class="num" value="'+y+'"></div>' +
+        '<div class="field" style="display:flex;align-items:flex-end"><button class="btn primary" id="realLoadBtn">Tampilkan</button></div></div>' +
+        '<div id="realBox"><div class="empty">Memuat...</div></div></div>';
+      document.getElementById('realLoadBtn').addEventListener('click', loadRealisasi);
+      loadRealisasi();
+    }
+    function loadRealisasi(){
+      var box=document.getElementById('realBox'); box.innerHTML='<div class="empty">Memuat...</div>';
+      gcall('apiGetRealisasi',{tahun:document.getElementById('realTahun').value}).then(function(res){
+        if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal');
+        if(!res.items.length){ box.innerHTML='<div class="empty">Belum ada data. Isi Pagu (RKKAL) &amp; transaksi tahun ini dulu.</div>'; return; }
+        var rows=res.items.map(function(o){
+          var warn = o.saldo<0 ? ' style="color:#991b1b;font-weight:600"' : '';
+          return '<tr><td class="mono">'+esc(o.kode)+'</td><td>'+esc(o.uraian)+'</td><td class="num">'+rupiah(o.pagu)+'</td><td class="num">'+rupiah(o.realisasi)+'</td><td class="num"'+warn+'>'+rupiah(o.saldo)+'</td><td class="num">'+o.persen+'%</td></tr>';
+        }).join('');
+        var t=res.total; var pct=t.pagu>0?Math.round(t.realisasi/t.pagu*1000)/10:0;
+        box.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Kode Akun</th><th>Uraian</th><th class="num">Pagu</th><th class="num">Realisasi</th><th class="num">Saldo</th><th class="num">%</th></tr></thead><tbody>'+rows+'</tbody>' +
+          '<tfoot><tr><th colspan="2">TOTAL</th><th class="num">'+rupiah(t.pagu)+'</th><th class="num">'+rupiah(t.realisasi)+'</th><th class="num">'+rupiah(t.saldo)+'</th><th class="num">'+pct+'%</th></tr></tfoot></table></div>';
+      }).catch(function(err){ box.innerHTML='<div class="empty">Gagal: '+esc(err.message)+'</div>'; });
     }
 
     /* ===================== Pengaturan ===================== */

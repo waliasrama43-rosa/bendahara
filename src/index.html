@@ -176,6 +176,7 @@
         Sekolah Aktif
         <b id="schoolName">Memuat...</b>
         <span class="mono" id="schoolId"></span>
+        <a id="sheetLink" href="#" target="_blank" style="display:none;color:#7dd3fc;font-size:11.5px;margin-top:8px;display:none">&#128203; Buka Spreadsheet (verifikasi data)</a>
       </div>
     </aside>
 
@@ -639,6 +640,11 @@
         STATE.schoolName = (res.schools && res.schools[0] && res.schools[0].nama) || 'Sekolah Rakyat';
         document.getElementById('schoolName').textContent = STATE.schoolName;
         document.getElementById('schoolId').textContent = res.schoolId || '';
+        if (res.spreadsheetUrl){
+          var link = document.getElementById('sheetLink');
+          link.href = res.spreadsheetUrl;
+          link.style.display = 'block';
+        }
         navigate('dashboard');
       }).catch(function(err){
         document.getElementById('schoolName').textContent = 'Gagal terhubung';

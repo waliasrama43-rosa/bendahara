@@ -47,6 +47,7 @@ function apiBootstrap() {
       schoolId: schoolId,
       schools: schools,
       stats: Database.getStats(schoolId),
+      spreadsheetUrl: Database.getSpreadsheetUrl(),
       serverTime: new Date().toISOString()
     };
   } catch (e) {
@@ -100,6 +101,7 @@ function apiSaveManualRows(payload) {
     var rows = payload.rows || [];
     var saved = 0;
     var skipped = 0;
+    var failed = 0;
 
     rows.forEach(function (r) {
       var kode = (r.kodeAnggaran || '').toString().trim();
@@ -115,7 +117,7 @@ function apiSaveManualRows(payload) {
         return;
       }
 
-      Database.insert('Data_Transaksi', {
+      var ok = Database.insert('Data_Transaksi', {
         id_transaksi: _genTrxId(),
         kode_anggaran: kode,
         nama_kegiatan: nama,
@@ -124,10 +126,13 @@ function apiSaveManualRows(payload) {
         status_verifikasi: 'pending',
         school_id: schoolId
       });
-      saved++;
+      if (ok) { saved++; } else { failed++; }
     });
 
-    return { ok: true, saved: saved, skipped: skipped };
+    if (failed > 0 && saved === 0) {
+      return { ok: false, error: 'Gagal menulis ke Spreadsheet (' + failed + ' baris). Cek otorisasi & deployment.' };
+    }
+    return { ok: true, saved: saved, skipped: skipped, failed: failed };
   } catch (e) {
     return { ok: false, error: String(e && e.message || e) };
   }
@@ -331,4 +336,63 @@ function apiSaveSchool(payload) {
   } catch (e) {
     return { ok: false, error: String(e && e.message || e) };
   }
+}
+
+
+/**
+ * Lightweight diagnostics for the web UI footer / debugging.
+ */
+function apiDiagnostics() {
+  try {
+    return {
+      ok: true,
+      spreadsheetUrl: Database.getSpreadsheetUrl(),
+      transaksiRows: Database.countRows('Data_Transaksi'),
+      sekolahRows: Database.countRows('Data_Sekolah'),
+      serverTime: new Date().toISOString()
+    };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
+/**
+ * SELF TEST — run this directly from the Apps Script editor (select
+ * `selfTest` in the function dropdown and click Run). It does NOT require a
+ * deployment, so it isolates "is my code/authorization OK?" from "is my web
+ * app deployment stale?".
+ *
+ * It writes one test transaction, reads it back, and logs the spreadsheet URL.
+ * Check View > Logs (or Executions) for the result, then open the URL to see
+ * the row in the sheet.
+ */
+function selfTest() {
+  var before = Database.countRows('Data_Transaksi');
+  var schoolId = Database.ensureDefaultSchool();
+
+  var ok = Database.insert('Data_Transaksi', {
+    id_transaksi: _genTrxId(),
+    kode_anggaran: 'TEST',
+    nama_kegiatan: 'SELF TEST ' + new Date().toLocaleString('id-ID'),
+    jumlah_rupiah: 12345,
+    timestamp: new Date().toISOString(),
+    status_verifikasi: 'pending',
+    school_id: schoolId
+  });
+
+  var after = Database.countRows('Data_Transaksi');
+  var url = Database.getSpreadsheetUrl();
+
+  var result = {
+    insertReturned: ok,
+    rowsBefore: before,
+    rowsAfter: after,
+    rowAdded: (after === before + 1),
+    spreadsheetUrl: url
+  };
+
+  Logger.log('=== SELF TEST RESULT ===');
+  Logger.log(JSON.stringify(result, null, 2));
+  Logger.log('Buka spreadsheet ini untuk verifikasi: ' + url);
+  return result;
 }

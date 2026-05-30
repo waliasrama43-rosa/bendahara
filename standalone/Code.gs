@@ -78,7 +78,8 @@ var Database = {
       'School_ID', 'Nama_Sekolah', 'Alamat_Sekolah', 'Kepala_Sekolah',
       'Bendahara', 'Status_Aktif', 'Tanggal_Daftar', 'Plan_Type'
     ],
-    System_Logs: ['Log_ID', 'Timestamp', 'Level', 'Module', 'Message', 'Details']
+    System_Logs: ['Log_ID', 'Timestamp', 'Level', 'Module', 'Message', 'Details'],
+    Users: ['Username', 'PasswordHash', 'Role', 'Nama', 'Status']
   },
 
   init: function () {
@@ -300,6 +301,19 @@ var Database = {
     return { items: items, grandTotal: grandTotal };
   },
 
+  // Rekap jumlah & total anggaran per jenjang (untuk Dashboard).
+  getJenjangBreakdown: function (schoolId) {
+    var order = ['SD', 'SMP', 'SMA/SMK', '(lainnya)'];
+    var map = { 'SD': { count: 0, total: 0 }, 'SMP': { count: 0, total: 0 }, 'SMA/SMK': { count: 0, total: 0 }, '(lainnya)': { count: 0, total: 0 } };
+    this.getTransactionsBySchool(schoolId, '*').forEach(function (t) {
+      var g = String(t.jenjang || '');
+      if (g !== 'SD' && g !== 'SMP' && g !== 'SMA/SMK') g = '(lainnya)';
+      map[g].count++;
+      map[g].total += Number(t.jumlah_rupiah) || 0;
+    });
+    return order.map(function (k) { return { jenjang: k, count: map[k].count, total: map[k].total }; });
+  },
+
   ensureDefaultSchool: function () {
     var schools = this.readAll('Data_Sekolah');
     if (schools.length > 0) return schools[0].school_id;
@@ -408,6 +422,23 @@ function _normalizeJenjang(val) {
   return '';
 }
 
+// Bukti disimpan sebagai JSON array [{name,url}] di kolom Bukti_URL.
+// Backward-compatible: nilai lama berupa satu URL polos tetap terbaca.
+function _parseBukti(val) {
+  var s = String(val == null ? '' : val).trim();
+  if (!s) return [];
+  if (s.charAt(0) === '[') {
+    try {
+      var arr = JSON.parse(s);
+      return arr.map(function (x) {
+        if (typeof x === 'string') return { name: 'Bukti', url: x };
+        return { name: x.name || 'Bukti', url: x.url || '' };
+      }).filter(function (x) { return x.url; });
+    } catch (e) { /* fallthrough */ }
+  }
+  return [{ name: 'Bukti', url: s }];
+}
+
 /* =========================================================================
  *  API (dipanggil dari UI via google.script.run)
  * ========================================================================= */
@@ -417,6 +448,7 @@ function apiBootstrap() {
     Database.init();
     var schoolId = Database.ensureDefaultSchool();
     Database.seedDemoIfEmpty(schoolId);
+    _seedUsers();
     var schools = Database.readAll('Data_Sekolah').map(function (s) {
       return { schoolId: s.school_id, nama: s.nama_sekolah };
     });
@@ -432,7 +464,7 @@ function apiBootstrap() {
 function apiGetDashboard(payload) {
   try {
     var schoolId = _resolveSchoolId(payload);
-    return { ok: true, schoolId: schoolId, stats: Database.getStats(schoolId) };
+    return { ok: true, schoolId: schoolId, stats: Database.getStats(schoolId), perJenjang: Database.getJenjangBreakdown(schoolId) };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 
@@ -446,7 +478,7 @@ function apiGetTransactions(payload) {
         status: String(t.status_verifikasi || 'pending'),
         bulan: t.bulan ? String(t.bulan) : '',
         jenjang: t.jenjang ? String(t.jenjang) : '',
-        buktiUrl: t.bukti_url ? String(t.bukti_url) : ''
+        bukti: _parseBukti(t.bukti_url)
       };
     });
     rows.reverse();
@@ -527,6 +559,7 @@ function apiGetRAB(payload) {
 function apiVerifyTransaction(payload) {
   try {
     payload = payload || {};
+    var g = _requireBendahara(payload); if (g) return g;
     if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
     var status = payload.action === 'reject' ? 'rejected' : 'verified';
     var updated = Database.updateTransactionStatus(payload.id, status);
@@ -554,6 +587,7 @@ function apiUpdateTransaction(payload) {
 function apiDeleteTransaction(payload) {
   try {
     payload = payload || {};
+    var g = _requireBendahara(payload); if (g) return g;
     if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
     var ok = Database.deleteTransaction(payload.id);
     return ok ? { ok: true } : { ok: false, error: 'Transaksi tidak ditemukan.' };
@@ -582,6 +616,7 @@ function apiGetSchool(payload) {
 function apiSaveSchool(payload) {
   try {
     payload = payload || {};
+    var g = _requireBendahara(payload); if (g) return g;
     var schoolId = _resolveSchoolId(payload);
     var ok = Database.updateSchool(schoolId, payload);
     return ok ? { ok: true } : { ok: false, error: 'Sekolah tidak ditemukan.' };
@@ -654,8 +689,36 @@ function apiUploadBukti(payload) {
     try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
     var url = file.getUrl();
 
-    Database.updateTransactionFields(payload.id, { bukti_url: url });
-    return { ok: true, url: url };
+    // Tambahkan ke daftar bukti yang sudah ada (mendukung banyak bukti per transaksi).
+    var current = [];
+    var rows = Database.readAll('Data_Transaksi');
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].id_transaksi === payload.id) { current = _parseBukti(rows[i].bukti_url); break; }
+    }
+    current.push({ name: payload.filename || ('Bukti ' + (current.length + 1)), url: url });
+    Database.updateTransactionFields(payload.id, { bukti_url: JSON.stringify(current) });
+    return { ok: true, url: url, count: current.length };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/**
+ * Hapus satu bukti dari daftar (berdasarkan index). File di Drive tidak ikut
+ * terhapus (hanya tautannya yang dilepas).
+ * payload = { id, index }
+ */
+function apiDeleteBukti(payload) {
+  try {
+    payload = payload || {};
+    if (!payload.id) return { ok: false, error: 'ID transaksi wajib diisi.' };
+    var cur = [];
+    var rows = Database.readAll('Data_Transaksi');
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].id_transaksi === payload.id) { cur = _parseBukti(rows[i].bukti_url); break; }
+    }
+    var idx = Number(payload.index);
+    if (idx >= 0 && idx < cur.length) cur.splice(idx, 1);
+    Database.updateTransactionFields(payload.id, { bukti_url: cur.length ? JSON.stringify(cur) : '' });
+    return { ok: true, count: cur.length };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 
@@ -697,11 +760,12 @@ function apiExportData(payload) {
       var dpp = Number(t.jumlah_rupiah) || 0;
       var ppn = Math.round(dpp * 0.11);
       var tot = dpp + ppn;
+      var bk = _parseBukti(t.bukti_url);
       totDpp += dpp; totPpn += ppn; totAll += tot;
       out.push([
         q(idx + 1), q(t.kode_anggaran), q(t.nama_kegiatan), q(t.bulan || ''),
         q(t.jenjang || ''), q(dpp), q(ppn), q(tot),
-        q(t.status_verifikasi || 'pending'), q(t.bukti_url || '')
+        q(t.status_verifikasi || 'pending'), q(bk.length ? (bk.length + ' file') : '')
       ].join(','));
     });
     out.push(['', '', q('TOTAL'), '', '', q(totDpp), q(totPpn), q(totAll), '', ''].join(','));
@@ -742,6 +806,7 @@ function _dummyRows(schoolId) {
 
 function apiSeedDummy(payload) {
   try {
+    var g = _requireBendahara(payload); if (g) return g;
     var schoolId = _resolveSchoolId(payload);
     var rows = _dummyRows(schoolId);
     var n = 0;
@@ -756,4 +821,82 @@ function seedDummyData() {
   var res = apiSeedDummy({ schoolId: schoolId });
   Logger.log('Dummy inserted: ' + JSON.stringify(res));
   return res;
+}
+
+
+
+/* =========================================================================
+ *  LOGIN & PERAN (Bendahara/admin vs Pelaksana/tendik)
+ * ========================================================================= */
+
+function _hashPw(pw) {
+  var raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'erp-salt-v1:' + String(pw));
+  var hex = '';
+  for (var i = 0; i < raw.length; i++) {
+    var b = (raw[i] + 256) % 256;
+    var h = b.toString(16);
+    hex += (h.length === 1 ? '0' : '') + h;
+  }
+  return hex;
+}
+
+// Buat akun default sekali saja (bisa diubah/ditambah di sheet "Users").
+function _seedUsers() {
+  try {
+    var sheet = Database.getSheet('Users');
+    if (!sheet) return;
+    if (Database.countRows('Users') > 0) return;
+    Database.insert('Users', { username: 'admin', passwordhash: _hashPw('bendahara123'), role: 'bendahara', nama: 'Bendahara Sekolah', status: 'aktif' });
+    Database.insert('Users', { username: 'tendik', passwordhash: _hashPw('tendik123'), role: 'pelaksana', nama: 'Tendik (Pelaksana)', status: 'aktif' });
+  } catch (e) { Logger.log('seedUsers error: ' + e.message); }
+}
+
+function _session(token) {
+  if (!token) return null;
+  try {
+    var v = CacheService.getScriptCache().get('sess_' + token);
+    return v ? JSON.parse(v) : null;
+  } catch (e) { return null; }
+}
+
+// Kembalikan objek error jika BUKAN bendahara; null jika boleh lanjut.
+function _requireBendahara(payload) {
+  var s = _session(payload && payload.token);
+  if (!s) return { ok: false, error: 'Sesi berakhir. Silakan login ulang.' };
+  if (s.role !== 'bendahara') return { ok: false, error: 'Akses ditolak. Hanya Bendahara (admin) yang berwenang.' };
+  return null;
+}
+
+function apiLogin(payload) {
+  try {
+    payload = payload || {};
+    var u = String(payload.username || '').trim().toLowerCase();
+    var p = String(payload.password || '');
+    if (!u || !p) return { ok: false, error: 'Username & password wajib diisi.' };
+    _seedUsers();
+    var users = Database.readAll('Users');
+    var hash = _hashPw(p);
+    for (var i = 0; i < users.length; i++) {
+      if (String(users[i].username || '').toLowerCase() === u && String(users[i].passwordhash || '') === hash) {
+        if (String(users[i].status || 'aktif').toLowerCase() === 'nonaktif') return { ok: false, error: 'Akun nonaktif.' };
+        var token = Utilities.getUuid();
+        var sess = { username: u, role: String(users[i].role || 'pelaksana'), nama: String(users[i].nama || u) };
+        CacheService.getScriptCache().put('sess_' + token, JSON.stringify(sess), 21600);
+        return { ok: true, token: token, role: sess.role, nama: sess.nama };
+      }
+    }
+    return { ok: false, error: 'Username atau password salah.' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiCheckSession(payload) {
+  var s = _session(payload && payload.token);
+  return s ? { ok: true, role: s.role, nama: s.nama } : { ok: false };
+}
+
+function apiLogout(payload) {
+  try {
+    if (payload && payload.token) CacheService.getScriptCache().remove('sess_' + payload.token);
+  } catch (e) {}
+  return { ok: true };
 }

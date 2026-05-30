@@ -147,6 +147,15 @@
     .modal{background:#fff;border-radius:14px;padding:20px;width:430px;max-width:100%;box-shadow:0 20px 50px rgba(0,0,0,.3);animation:slideIn .15s ease}
     .modal h3{margin:0 0 14px;font-size:16px}
 
+    /* Login */
+    #login{position:fixed;inset:0;background:linear-gradient(135deg,#0f172a,#1e293b);display:none;align-items:center;justify-content:center;z-index:100;padding:16px}
+    #login.show{display:flex}
+    .loginbox{background:#fff;border-radius:16px;padding:28px;width:360px;max-width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4);text-align:center}
+    .loginbox h2{font-size:18px;margin:14px 0 2px}
+    .loginbox .field{text-align:left}
+    .llogo{width:48px;height:48px;border-radius:12px;margin:0 auto;background:linear-gradient(135deg,var(--brand),var(--accent));display:flex;align-items:center;justify-content:center;font-weight:800;color:#04210f;font-size:18px}
+    .rolebadge{font-size:11px;padding:3px 9px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:600}
+
     /* Loading bar */
     #loading{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:0;transition:width .3s;z-index:60}
 
@@ -193,7 +202,11 @@
           <h1 id="pageTitle">Dashboard</h1>
           <div class="sub" id="pageSub">Ringkasan keuangan sekolah</div>
         </div>
-        <button class="btn ghost" id="refreshBtn">&#8635; Muat Ulang</button>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="userBadge" class="rolebadge" style="display:none"></span>
+          <button class="btn ghost" id="refreshBtn">&#8635; Muat Ulang</button>
+          <button class="btn ghost" id="logoutBtn" style="display:none">Keluar</button>
+        </div>
       </header>
       <main class="content" id="content"><!-- pages injected here --></main>
     </div>
@@ -211,9 +224,11 @@
     </div>
   </div>
 
+  <div id="login" class="modal-overlay"></div>
+
   <script>
     /* ===================== Helpers ===================== */
-    var STATE = { schoolId: null, schoolName: '' };
+    var STATE = { schoolId: null, schoolName: '', token: '', role: '', userName: '' };
     var loadingCount = 0;
 
     function showLoading(on){
@@ -226,6 +241,7 @@
 
     // Promise wrapper around google.script.run
     function gcall(fn, payload){
+      if (STATE.token && fn !== 'apiLogin'){ payload = payload || {}; if (typeof payload === 'object') payload.token = STATE.token; }
       return new Promise(function(resolve, reject){
         if (typeof google === 'undefined' || !google.script || !google.script.run){
           reject(new Error('google.script.run tidak tersedia (jalankan via Web App Apps Script).'));
@@ -332,6 +348,10 @@
           card('amber','Menunggu Verifikasi','dashPending','perlu ditinjau','amber') +
         '</div>' +
         '<div class="panel">' +
+          '<h2>Rekap Anggaran per Jenjang</h2>' +
+          '<div id="jenjangBox"><div class="empty">Memuat...</div></div>' +
+        '</div>' +
+        '<div class="panel">' +
           '<h2>Selamat datang &#128075;</h2>' +
           '<p class="desc">Gunakan menu <b>Input / Upload RKKAL</b> untuk menambah data anggaran, lalu pantau ringkasannya di sini.</p>' +
           '<div class="row-actions">' +
@@ -347,11 +367,13 @@
         setText('dashAnggaran', rupiah(s.totalAnggaran || 0));
         setText('dashVerified', String(s.terverifikasi || 0));
         setText('dashPending', String(s.pending || 0));
+        renderJenjangBox(res.perJenjang || []);
       }).catch(function(err){
         toast('Dashboard: ' + err.message, 'err');
         // Show 0 instead of "—" so the cards still read as numbers.
         setText('dashTotal','0'); setText('dashAnggaran', rupiah(0));
         setText('dashVerified','0'); setText('dashPending','0');
+        var jb = document.getElementById('jenjangBox'); if (jb) jb.innerHTML = '<div class="empty">-</div>';
       });
     }
     function card(color,label,id,pill,pillColor,small){
@@ -362,6 +384,19 @@
       '</div>';
     }
     function setText(id, txt){ var el=document.getElementById(id); if(el) el.innerHTML = txt; }
+    function renderJenjangBox(pj){
+      var box = document.getElementById('jenjangBox'); if (!box) return;
+      var rows = '', gt = 0, gc = 0;
+      pj.forEach(function(r){
+        if (r.count===0 && r.jenjang==='(lainnya)') return;
+        gt += r.total; gc += r.count;
+        rows += '<tr><td>'+esc(r.jenjang)+'</td><td class="num">'+r.count+'</td><td class="num">'+rupiah(r.total)+'</td></tr>';
+      });
+      if (!rows){ box.innerHTML = '<div class="empty">Belum ada data. Tambahkan transaksi dengan jenjang.</div>'; return; }
+      box.innerHTML = '<table><thead><tr><th>Jenjang</th><th class="num">Transaksi</th><th class="num">Total Anggaran</th></tr></thead>' +
+        '<tbody>'+rows+'</tbody>' +
+        '<tfoot><tr><th>Total</th><th class="num">'+gc+'</th><th class="num">'+rupiah(gt)+'</th></tr></tfoot></table>';
+    }
 
     /* ===================== Input / Upload RKKAL ===================== */
     function renderRKKAL(){
@@ -625,18 +660,19 @@
         var st = (t.status||'pending').toLowerCase();
         var cls = st.indexOf('verif')>-1 ? 'verified' : (st.indexOf('reject')>-1||st.indexOf('tolak')>-1 ? 'rejected':'pending');
         var label = cls==='verified'?'Terverifikasi':(cls==='rejected'?'Ditolak':'Menunggu');
-        var verifyBtns = cls==='pending'
+        var isBdh = STATE.role === 'bendahara';
+        var verifyBtns = (isBdh && cls==='pending')
           ? '<button class="btn ok tiny" onclick="verifyTrx(\''+t.id+'\',\'approve\')">Setujui</button> ' +
             '<button class="btn no tiny" onclick="verifyTrx(\''+t.id+'\',\'reject\')">Tolak</button> '
           : '';
-        var buktiBtn = t.buktiUrl
-          ? '<a class="btn ok tiny" href="'+t.buktiUrl+'" target="_blank">Lihat Bukti</a> '
-          : '<button class="btn ghost tiny" onclick="buktiTrx(\''+t.id+'\')">Upload Bukti</button> ';
+        var nb = (t.bukti && t.bukti.length) ? t.bukti.length : 0;
+        var buktiBtn = '<button class="btn '+(nb?'ok':'ghost')+' tiny" onclick="buktiTrx(\''+t.id+'\')">Bukti'+(nb?(' ('+nb+')'):'')+'</button> ';
+        var delBtn = isBdh ? '<button class="btn no tiny" onclick="deleteTrx(\''+t.id+'\')">Hapus</button>' : '';
         var actions = verifyBtns +
           '<button class="btn ghost tiny" onclick="kwitansiTrx(\''+t.id+'\')">Kwitansi</button> ' +
           buktiBtn +
           '<button class="btn ghost tiny" onclick="editTrx(\''+t.id+'\')">Edit</button> ' +
-          '<button class="btn no tiny" onclick="deleteTrx(\''+t.id+'\')">Hapus</button>';
+          delBtn;
         return '<tr>' +
           '<td class="mono">'+esc(t.kode)+'</td>' +
           '<td>'+esc(t.nama)+'</td>' +
@@ -697,11 +733,13 @@
     }
 
     /* ===================== Modal helpers ===================== */
-    function openModal(title, bodyHtml, onSave){
+    function openModal(title, bodyHtml, onSave, saveLabel){
       document.getElementById('modalTitle').textContent = title;
       document.getElementById('modalBody').innerHTML = bodyHtml;
       document.getElementById('modal').classList.add('show');
-      document.getElementById('modalSave').onclick = onSave;
+      var sv = document.getElementById('modalSave');
+      sv.textContent = saveLabel || 'Simpan';
+      sv.onclick = onSave;
     }
     function closeModal(){ document.getElementById('modal').classList.remove('show'); }
 
@@ -751,7 +789,32 @@
       if (!win){ toast('Popup diblokir. Izinkan popup untuk mencetak kwitansi.', 'err'); return; }
       win.document.open(); win.document.write(html); win.document.close();
     }
-    function buktiTrx(id){
+    function buktiTrx(id){ renderBuktiModal(id); }
+    function renderBuktiModal(id){
+      var t = findTrx(id); if(!t) return;
+      var list = t.bukti || [];
+      var body = '';
+      if (!list.length) body += '<p class="muted">Belum ada bukti untuk transaksi ini.</p>';
+      else {
+        body += '<table><tbody>';
+        list.forEach(function(b,i){
+          body += '<tr><td>'+esc(b.name||('Bukti '+(i+1)))+'</td>' +
+            '<td><a href="'+esc(b.url)+'" target="_blank">Lihat</a></td>' +
+            '<td style="text-align:right"><button class="btn no tiny" onclick="hapusBukti(\''+id+'\','+i+')">Hapus</button></td></tr>';
+        });
+        body += '</tbody></table>';
+      }
+      body += '<div class="row-actions"><button class="btn primary" onclick="tambahBukti(\''+id+'\')">&#43; Tambah Bukti</button></div>' +
+        '<div class="hint" style="margin-top:10px">Satu transaksi boleh punya banyak bukti (mis. nota, faktur, foto). Maks 5 MB/berkas.</div>';
+      openModal('Bukti Transaksi ('+list.length+')', body, closeModal, 'Tutup');
+    }
+    function refreshTrx(cb){
+      gcall('apiGetTransactions', { schoolId: STATE.schoolId }).then(function(res){
+        if (res && res.ok){ TRX_ALL = res.rows||[]; renderTrxTable(); }
+        if (cb) cb();
+      }).catch(function(err){ toast('Gagal memuat: '+err.message,'err'); });
+    }
+    function tambahBukti(id){
       var input = document.createElement('input');
       input.type = 'file';
       input.accept = 'image/*,application/pdf';
@@ -764,12 +827,21 @@
           toast('Mengunggah bukti...');
           gcall('apiUploadBukti', { id:id, filename:f.name, mimeType:f.type, dataBase64:base64 }).then(function(res){
             if (!res || !res.ok) throw new Error((res&&res.error)||'Gagal');
-            toast('Bukti berhasil diunggah.', 'ok'); loadTransaksi();
+            toast('Bukti berhasil diunggah.', 'ok');
+            refreshTrx(function(){ renderBuktiModal(id); });
           }).catch(function(err){ toast('Gagal: '+err.message, 'err'); });
         };
         reader.readAsDataURL(f);
       };
       input.click();
+    }
+    function hapusBukti(id, idx){
+      if (!confirm('Hapus bukti ini dari daftar transaksi?')) return;
+      gcall('apiDeleteBukti', { id:id, index:idx }).then(function(res){
+        if (!res || !res.ok) throw new Error((res&&res.error)||'Gagal');
+        toast('Bukti dihapus.', 'ok');
+        refreshTrx(function(){ renderBuktiModal(id); });
+      }).catch(function(err){ toast('Gagal: '+err.message, 'err'); });
     }
 
     /* ===================== Kalkulator Pajak ===================== */
@@ -839,15 +911,17 @@
           '</div>' +
           '<div class="row-actions">' +
             '<button class="btn primary" id="expBtn">&#8595; Unduh Laporan SPJ (CSV)</button>' +
+            '<button class="btn ghost" id="cetakBtn">Cetak Laporan (PDF)</button>' +
           '</div>' +
         '</div>' +
-        '<div class="panel">' +
+        (STATE.role==='bendahara' ?
+        ('<div class="panel">' +
           '<h2>Data Contoh (untuk uji coba)</h2>' +
           '<p class="desc">Isi otomatis 8 transaksi contoh (beragam bulan & jenjang) agar Anda bisa langsung menguji export, kwitansi, dan filter.</p>' +
           '<div class="row-actions">' +
             '<button class="btn ghost" id="seedBtn">&#43; Isi Data Contoh</button>' +
           '</div>' +
-        '</div>';
+        '</div>') : '');
       document.getElementById('expBtn').addEventListener('click', function(){
         var btn = this; btn.disabled = true;
         gcall('apiExportData', { schoolId: STATE.schoolId, period: document.getElementById('expPeriod').value, jenjang: document.getElementById('expJenjang').value }).then(function(res){
@@ -862,7 +936,9 @@
           toast(res.jumlahBaris + ' baris diekspor.', 'ok');
         }).catch(function(err){ btn.disabled=false; toast('Gagal: ' + err.message, 'err'); });
       });
-      document.getElementById('seedBtn').addEventListener('click', function(){
+      document.getElementById('cetakBtn').addEventListener('click', cetakLaporan);
+      var sb = document.getElementById('seedBtn');
+      if (sb) sb.addEventListener('click', function(){
         if (!confirm('Tambahkan 8 transaksi contoh ke data Anda?')) return;
         var btn = this; btn.disabled = true;
         gcall('apiSeedDummy', { schoolId: STATE.schoolId }).then(function(res){
@@ -871,6 +947,54 @@
           toast(res.inserted + ' data contoh ditambahkan.', 'ok');
         }).catch(function(err){ btn.disabled=false; toast('Gagal: ' + err.message, 'err'); });
       });
+    }
+
+    function cetakLaporan(){
+      var period = document.getElementById('expPeriod').value;
+      var jenjang = document.getElementById('expJenjang').value;
+      Promise.all([
+        gcall('apiGetTransactions', { schoolId: STATE.schoolId }),
+        gcall('apiGetSchool', { schoolId: STATE.schoolId })
+      ]).then(function(arr){
+        var tr = arr[0], sc = arr[1];
+        if (!tr || !tr.ok) throw new Error((tr&&tr.error)||'Gagal memuat transaksi');
+        var rows = (tr.rows||[]).filter(function(t){
+          var p = t.bulan || trxPeriodOf(t.timestamp);
+          if (period!=='*' && p!==period) return false;
+          if (jenjang && String(t.jenjang||'')!==jenjang) return false;
+          return true;
+        });
+        if (!rows.length){ toast('Belum ada data untuk filter ini.','err'); return; }
+        var school = (sc&&sc.ok&&sc.school) ? sc.school : {namaSekolah:STATE.schoolName,kepalaSekolah:'-',bendahara:'-',alamat:'-'};
+        var totDpp=0, totPpn=0, totAll=0;
+        var body = rows.map(function(t,i){
+          var dpp=Number(t.jumlah)||0, ppn=Math.round(dpp*0.11), tot=dpp+ppn;
+          totDpp+=dpp; totPpn+=ppn; totAll+=tot;
+          return '<tr><td>'+(i+1)+'</td><td>'+esc(t.kode)+'</td><td>'+esc(t.nama)+'</td><td>'+esc(bulanLabel(t.bulan))+'</td><td>'+esc(t.jenjang||'-')+'</td><td class="r">'+rupiah(dpp)+'</td><td class="r">'+rupiah(ppn)+'</td><td class="r">'+rupiah(tot)+'</td></tr>';
+        }).join('');
+        var periodLabel = period==='*' ? 'Semua Periode' : bulanLabel(period);
+        var today = new Date().toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
+        var html = '<!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><title>Laporan SPJ</title>' +
+          '<style>body{font-family:Arial,sans-serif;padding:26px;color:#111;font-size:12px}' +
+          '.kop{text-align:center;border-bottom:3px double #111;padding-bottom:10px;margin-bottom:14px}' +
+          '.kop h1{font-size:18px;margin:0}.kop p{margin:2px 0}' +
+          'table.t{width:100%;border-collapse:collapse;margin-top:8px}table.t th,table.t td{border:1px solid #555;padding:5px 7px}table.t th{background:#eee}.r{text-align:right}' +
+          '.ttd{margin-top:34px;width:100%}.ttd td{text-align:center;vertical-align:top;width:50%}' +
+          '@media print{.noprint{display:none}}</style></head><body>' +
+          '<div class="kop"><h1>'+esc(school.namaSekolah||'Sekolah')+'</h1><p>'+esc(school.alamat||'')+'</p>' +
+          '<h2 style="margin:8px 0 0;font-size:15px">LAPORAN SURAT PERTANGGUNGJAWABAN (SPJ)</h2>' +
+          '<p>Periode: '+esc(periodLabel)+(jenjang?(' &middot; Jenjang: '+esc(jenjang)):'')+'</p></div>' +
+          '<table class="t"><thead><tr><th>No</th><th>Kode</th><th>Uraian Kegiatan</th><th>Bulan</th><th>Jenjang</th><th>DPP</th><th>PPN 11%</th><th>Total</th></tr></thead>' +
+          '<tbody>'+body+'</tbody>' +
+          '<tfoot><tr><th colspan="5">TOTAL</th><th class="r">'+rupiah(totDpp)+'</th><th class="r">'+rupiah(totPpn)+'</th><th class="r">'+rupiah(totAll)+'</th></tr></tfoot></table>' +
+          '<table class="ttd"><tr><td>Mengetahui,<br>Kepala Sekolah<br><br><br><br><b>'+esc(school.kepalaSekolah||'-')+'</b></td>' +
+          '<td>'+esc(school.namaSekolah||'')+', '+today+'<br>Bendahara<br><br><br><br><b>'+esc(school.bendahara||'-')+'</b></td></tr></table>' +
+          '<div class="noprint" style="text-align:center;margin-top:18px"><button onclick="window.print()" style="padding:9px 18px;cursor:pointer">Cetak / Simpan PDF</button></div>' +
+          '</body></html>';
+        var win = window.open('', '_blank');
+        if (!win){ toast('Popup diblokir. Izinkan popup untuk mencetak laporan.','err'); return; }
+        win.document.open(); win.document.write(html); win.document.close();
+      }).catch(function(err){ toast('Gagal: '+err.message,'err'); });
     }
 
     /* ===================== Pengaturan ===================== */
@@ -913,28 +1037,81 @@
     function val(id,v){ var el=document.getElementById(id); if(el) el.value = (v==null?'':v); }
     function getVal(id){ var el=document.getElementById(id); return el?el.value:''; }
 
-    /* ===================== Boot ===================== */
+    /* ===================== Login & Boot ===================== */
     function boot(){
+      var token = localStorage.getItem('erp_token');
+      if (token){
+        STATE.token = token;
+        gcall('apiCheckSession', { token: token }).then(function(res){
+          if (res && res.ok){ STATE.role=res.role; STATE.userName=res.nama; afterLogin(); }
+          else { STATE.token=''; localStorage.removeItem('erp_token'); showLogin(); }
+        }).catch(function(){ STATE.token=''; showLogin(); });
+      } else { showLogin(); }
+    }
+    function showLogin(){
+      var el = document.getElementById('login');
+      el.classList.add('show');
+      el.innerHTML =
+        '<form class="loginbox" id="loginForm">' +
+          '<div class="llogo">SR</div>' +
+          '<h2>ERP Keuangan Sekolah Rakyat</h2>' +
+          '<p class="muted" style="margin-top:-2px;margin-bottom:14px">Masuk untuk melanjutkan</p>' +
+          '<div class="field"><label>Username</label><input id="lgUser" autocomplete="username"></div>' +
+          '<div class="field"><label>Password</label><input id="lgPass" type="password" autocomplete="current-password"></div>' +
+          '<button class="btn primary" type="submit" id="lgBtn" style="width:100%;justify-content:center">Masuk</button>' +
+          '<div class="hint" style="margin-top:14px;text-align:left">Akun default: <b>admin</b> / bendahara123 (Bendahara) atau <b>tendik</b> / tendik123 (Pelaksana). Ganti di sheet <b>Users</b>.</div>' +
+        '</form>';
+      document.getElementById('loginForm').addEventListener('submit', function(e){ e.preventDefault(); doLogin(); });
+    }
+    function doLogin(){
+      var u = document.getElementById('lgUser').value;
+      var p = document.getElementById('lgPass').value;
+      var btn = document.getElementById('lgBtn'); btn.disabled = true;
+      gcall('apiLogin', { username:u, password:p }).then(function(res){
+        btn.disabled = false;
+        if (!res || !res.ok) throw new Error((res&&res.error)||'Gagal login');
+        STATE.token=res.token; STATE.role=res.role; STATE.userName=res.nama;
+        localStorage.setItem('erp_token', res.token);
+        afterLogin();
+      }).catch(function(err){ btn.disabled=false; toast('Login gagal: '+err.message,'err'); });
+    }
+    function doLogout(){
+      var t = STATE.token;
+      STATE.token=''; STATE.role=''; STATE.userName='';
+      localStorage.removeItem('erp_token');
+      gcall('apiLogout', { token:t });
+      document.getElementById('logoutBtn').style.display='none';
+      document.getElementById('userBadge').style.display='none';
+      showLogin();
+    }
+    function applyRole(){
+      var isBdh = STATE.role === 'bendahara';
+      var setBtn = document.querySelector('#nav button[data-page="pengaturan"]');
+      if (setBtn) setBtn.style.display = isBdh ? '' : 'none';
+      var badge = document.getElementById('userBadge');
+      badge.textContent = (STATE.userName||'') + ' \u00b7 ' + (isBdh ? 'Bendahara' : 'Pelaksana');
+      badge.style.display = '';
+      document.getElementById('logoutBtn').style.display = '';
+    }
+    function afterLogin(){
+      document.getElementById('login').classList.remove('show');
+      applyRole();
       gcall('apiBootstrap', null).then(function(res){
         if (!res || !res.ok) throw new Error((res && res.error) || 'Bootstrap gagal');
         STATE.schoolId = res.schoolId;
         STATE.schoolName = (res.schools && res.schools[0] && res.schools[0].nama) || 'Sekolah Rakyat';
         document.getElementById('schoolName').textContent = STATE.schoolName;
         document.getElementById('schoolId').textContent = res.schoolId || '';
-        if (res.spreadsheetUrl){
-          var link = document.getElementById('sheetLink');
-          link.href = res.spreadsheetUrl;
-          link.style.display = 'block';
-        }
+        if (res.spreadsheetUrl){ var link=document.getElementById('sheetLink'); link.href=res.spreadsheetUrl; link.style.display='block'; }
         navigate('dashboard');
       }).catch(function(err){
         document.getElementById('schoolName').textContent = 'Gagal terhubung';
         toast('Bootstrap: ' + err.message, 'err');
-        navigate('dashboard'); // still render UI so menus respond
+        navigate('dashboard');
       });
     }
 
-    // Wire nav + refresh
+    // Wire nav + refresh + logout
     document.getElementById('nav').addEventListener('click', function(e){
       var btn = e.target.closest ? e.target.closest('button[data-page]') : null;
       if (!btn){ var t=e.target; while(t && t!==this){ if(t.getAttribute && t.getAttribute('data-page')){btn=t;break;} t=t.parentNode; } }
@@ -944,6 +1121,7 @@
       var active = document.querySelector('#nav button.active');
       navigate(active ? active.getAttribute('data-page') : 'dashboard');
     });
+    document.getElementById('logoutBtn').addEventListener('click', doLogout);
 
     boot();
   </script>

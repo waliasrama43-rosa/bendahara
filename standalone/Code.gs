@@ -221,34 +221,42 @@ var Database = {
   },
 
   _seedConfigSheets: function (ss) {
-    // Seed Config_Akun from REF.KODE_AKUN if empty
-    var sheetAkun = ss.getSheetByName('Config_Akun');
-    if (sheetAkun && sheetAkun.getLastRow() <= 1) {
-      for (var i = 0; i < REF.KODE_AKUN.length; i++) {
-        sheetAkun.appendRow([REF.KODE_AKUN[i].kode, REF.KODE_AKUN[i].nama, 'Y']);
+    var lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(10000);
+    } catch (e) { return; }
+    try {
+      // Seed Config_Akun from REF.KODE_AKUN if empty
+      var sheetAkun = ss.getSheetByName('Config_Akun');
+      if (sheetAkun && sheetAkun.getLastRow() <= 1) {
+        for (var i = 0; i < REF.KODE_AKUN.length; i++) {
+          sheetAkun.appendRow([REF.KODE_AKUN[i].kode, REF.KODE_AKUN[i].nama, 'Y']);
+        }
       }
-    }
-    // Seed Config_Kegiatan from REF.KEGIATAN if empty
-    var sheetKeg = ss.getSheetByName('Config_Kegiatan');
-    if (sheetKeg && sheetKeg.getLastRow() <= 1) {
-      for (var j = 0; j < REF.KEGIATAN.length; j++) {
-        sheetKeg.appendRow([REF.KEGIATAN[j].kode, REF.KEGIATAN[j].nama, 'Y']);
+      // Seed Config_Kegiatan from REF.KEGIATAN if empty
+      var sheetKeg = ss.getSheetByName('Config_Kegiatan');
+      if (sheetKeg && sheetKeg.getLastRow() <= 1) {
+        for (var j = 0; j < REF.KEGIATAN.length; j++) {
+          sheetKeg.appendRow([REF.KEGIATAN[j].kode, REF.KEGIATAN[j].nama, 'Y']);
+        }
       }
-    }
-    // Seed Config_Prefix from REF.MAK_PREFIX if empty
-    var sheetPfx = ss.getSheetByName('Config_Prefix');
-    if (sheetPfx && sheetPfx.getLastRow() <= 1) {
-      for (var k = 0; k < REF.MAK_PREFIX.length; k++) {
-        sheetPfx.appendRow([REF.MAK_PREFIX[k].kode, REF.MAK_PREFIX[k].nama, 'Y']);
+      // Seed Config_Prefix from REF.MAK_PREFIX if empty
+      var sheetPfx = ss.getSheetByName('Config_Prefix');
+      if (sheetPfx && sheetPfx.getLastRow() <= 1) {
+        for (var k = 0; k < REF.MAK_PREFIX.length; k++) {
+          sheetPfx.appendRow([REF.MAK_PREFIX[k].kode, REF.MAK_PREFIX[k].nama, 'Y']);
+        }
       }
-    }
-    // Seed script owner as Admin in Config_Users if empty
-    var sheetUsers = ss.getSheetByName('Config_Users');
-    if (sheetUsers && sheetUsers.getLastRow() <= 1) {
-      var ownerEmail = _getActiveUserEmail();
-      if (ownerEmail) {
-        sheetUsers.appendRow([ownerEmail, 'Admin', 'Owner', 'active']);
+      // Seed script owner as Admin in Config_Users if empty
+      var sheetUsers = ss.getSheetByName('Config_Users');
+      if (sheetUsers && sheetUsers.getLastRow() <= 1) {
+        var ownerEmail = _getActiveUserEmail();
+        if (ownerEmail) {
+          sheetUsers.appendRow([ownerEmail, 'Admin', 'Owner', 'active']);
+        }
       }
+    } finally {
+      lock.releaseLock();
     }
   },
 
@@ -1264,13 +1272,30 @@ function apiUploadRKKALCsv(payload) {
       var c = _splitCsvLine(lines[i]);
 
       // Apply mapping if available (reorder columns based on mapping)
-      if (mapping && mapping.columns) {
-        var mapped = [];
-        for (var mc = 0; mc < mapping.columns.length; mc++) {
-          var colIdx = mapping.columns[mc];
-          mapped.push(c[colIdx] !== undefined ? c[colIdx] : '');
+      if (mapping) {
+        if (mapping.columns && Array.isArray(mapping.columns)) {
+          var mapped = [];
+          for (var mc = 0; mc < mapping.columns.length; mc++) {
+            var colIdx = mapping.columns[mc];
+            mapped.push(c[colIdx] !== undefined ? c[colIdx] : '');
+          }
+          c = mapped;
+        } else if (typeof mapping === 'object' && !Array.isArray(mapping) && !mapping.columns) {
+          // Object format: keys are CSV column indices, values are system field names
+          var rkkalFields = ['kodeKegiatan','kodeAkun','uraian','volume','satuan','hargaSatuan','jumlahBiaya'];
+          var remapped = [];
+          for (var rf = 0; rf < rkkalFields.length; rf++) { remapped.push(''); }
+          var keys = Object.keys(mapping);
+          for (var mk = 0; mk < keys.length; mk++) {
+            var csvIdx = parseInt(keys[mk], 10);
+            var fieldName = String(mapping[keys[mk]]);
+            var targetIdx = rkkalFields.indexOf(fieldName);
+            if (targetIdx !== -1 && c[csvIdx] !== undefined) {
+              remapped[targetIdx] = c[csvIdx];
+            }
+          }
+          c = remapped;
         }
-        c = mapped;
       }
 
       var keg = (c[0] || '').trim().toUpperCase();
@@ -1325,13 +1350,30 @@ function apiUploadRekapCsv(payload) {
       var c = _splitCsvLine(lines[i]);
 
       // Apply mapping if available
-      if (mapping && mapping.columns) {
-        var mapped = [];
-        for (var mc = 0; mc < mapping.columns.length; mc++) {
-          var colIdx = mapping.columns[mc];
-          mapped.push(c[colIdx] !== undefined ? c[colIdx] : '');
+      if (mapping) {
+        if (mapping.columns && Array.isArray(mapping.columns)) {
+          var mapped = [];
+          for (var mc = 0; mc < mapping.columns.length; mc++) {
+            var colIdx = mapping.columns[mc];
+            mapped.push(c[colIdx] !== undefined ? c[colIdx] : '');
+          }
+          c = mapped;
+        } else if (typeof mapping === 'object' && !Array.isArray(mapping) && !mapping.columns) {
+          // Object format: keys are CSV column indices, values are system field names
+          var rekapFields = ['tanggal','namaToko','kodeMak','uraian','tahun','bulan','jumlah','jenjang'];
+          var remapped = [];
+          for (var rf = 0; rf < rekapFields.length; rf++) { remapped.push(''); }
+          var keys = Object.keys(mapping);
+          for (var mk = 0; mk < keys.length; mk++) {
+            var csvIdx = parseInt(keys[mk], 10);
+            var fieldName = String(mapping[keys[mk]]);
+            var targetIdx = rekapFields.indexOf(fieldName);
+            if (targetIdx !== -1 && c[csvIdx] !== undefined) {
+              remapped[targetIdx] = c[csvIdx];
+            }
+          }
+          c = remapped;
         }
-        c = mapped;
       }
 
       var tanggal = _normalizeTanggal(c[0]);
@@ -1965,7 +2007,7 @@ function apiUploadLogo(payload) {
         sheet.appendRow(['logoUrl', url]);
       }
     }
-    return { ok: true, url: url };
+    return { ok: true, logoUrl: url };
   });
 }
 

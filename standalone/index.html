@@ -808,7 +808,7 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
         var items = res.items||[];
         if (!items.length){ box.innerHTML = '<div class="empty">Belum ada data.</div>'; return; }
         var rows = items.map(function(it){
-          var aktifCls = (it.aktif===false||it.aktif==='false'||it.aktif==='FALSE') ? 'inactive' : 'active';
+          var aktifCls = (it.aktif==='N'||it.aktif===false||it.aktif==='false'||it.aktif==='FALSE') ? 'inactive' : 'active';
           var aktifLabel = aktifCls==='active' ? 'Aktif' : 'Non-aktif';
           return '<tr><td class="mono">'+esc(it.kode)+'</td><td>'+esc(it.nama)+'</td><td><span class="badge '+aktifCls+'">'+aktifLabel+'</span></td><td style="white-space:nowrap"><button class="btn ghost tiny" onclick="cfgEditModal(\''+esc(opts.key)+'\',\''+esc(it.kode)+'\',\''+esc(it.nama)+'\')">Edit</button> <button class="btn ghost tiny" onclick="cfgToggle(\''+esc(opts.key)+'\',\''+esc(it.kode)+'\','+String(aktifCls==='active')+')">'+(aktifCls==='active'?'Nonaktifkan':'Aktifkan')+'</button></td></tr>';
         }).join('');
@@ -825,8 +825,8 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
         function(){ gcall(opts.apiUpdate,{kode:kode,nama:getVal('cfgNama')}).then(function(res){ if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast('Diperbarui.','ok'); closeModal(); cfgLoad(opts); }).catch(function(err){ toast('Gagal: '+err.message,'err'); }); });
     }
     function cfgToggle(key, kode, currentlyActive){
-      var opts = CFG_OPTS[key]; var newAktif = !currentlyActive;
-      gcall(opts.apiUpdate, {kode:kode, aktif:newAktif}).then(function(res){ if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast(newAktif?'Diaktifkan.':'Dinonaktifkan.','ok'); cfgLoad(opts); }).catch(function(err){ toast('Gagal: '+err.message,'err'); });
+      var opts = CFG_OPTS[key]; var newAktif = currentlyActive ? 'N' : 'Y';
+      gcall(opts.apiUpdate, {kode:kode, aktif:newAktif}).then(function(res){ if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast(newAktif==='Y'?'Diaktifkan.':'Dinonaktifkan.','ok'); cfgLoad(opts); }).catch(function(err){ toast('Gagal: '+err.message,'err'); });
     }
 
     /* ===================== Template Export ===================== */
@@ -933,9 +933,7 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
         STATE.userEmail = email;
         runBootstrap();
       }).catch(function(err){
-        STATE.role = 'Admin';
-        STATE.userEmail = 'dev@localhost';
-        runBootstrap();
+        showAccessDenied('');
       });
     }
     function runBootstrap(){

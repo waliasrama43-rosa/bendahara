@@ -84,7 +84,8 @@ var REF = {
     { kode: '523111', nama: 'Belanja Pemeliharaan Gedung dan Bangunan' },
     { kode: '523121', nama: 'Belanja Pemeliharaan Peralatan dan Mesin' },
     { kode: '524111', nama: 'Belanja Perjalanan Dinas Biasa' },
-    { kode: '524113', nama: 'Belanja Perjalanan Dinas Dalam Kota' }
+    { kode: '524113', nama: 'Belanja Perjalanan Dinas Dalam Kota' },
+    { kode: '521252', nama: 'Belanja Peralatan dan Mesin - Ekstrakomptabel' }
   ],
 
   // Kode Kegiatan (huruf) pada struktur RKKAL / segmen MAK.
@@ -93,10 +94,15 @@ var REF = {
     { kode: 'B', nama: 'Praktikum Komunitas' },
     { kode: 'C', nama: 'Kegiatan Krida' },
     { kode: 'D', nama: 'Karya Ilmiah dan Latihan Olahraga Seni' },
-    { kode: 'E', nama: 'Layanan Perkantoran' },
+    { kode: 'E', nama: 'Koordinasi dan Konsultasi Sekolah Rakyat' },
     { kode: 'F', nama: 'Operasional Perkantoran' },
-    { kode: 'G', nama: 'Layanan Kesehatan / UKS' },
-    { kode: 'M', nama: 'Perjalanan Dinas' }
+    { kode: 'G', nama: 'Perlengkapan Operasional Sekolah' },
+    { kode: 'H', nama: 'Kebutuhan Asrama' },
+    { kode: 'I', nama: 'Pengasramaan Siswa' },
+    { kode: 'J', nama: 'Pengasramaan Guru dan Tenaga Pendidik' },
+    { kode: 'K', nama: 'Peralatan Makan Siswa' },
+    { kode: 'L', nama: 'Perlengkapan Sekolah' },
+    { kode: 'M', nama: 'Dukungan Penyelenggaraan Operasional Sekolah Rakyat' }
   ],
 
   // Prefix segmen MAK (di depan huruf kegiatan & kode akun).
@@ -109,7 +115,7 @@ var REF = {
 
   JENJANG: ['SD', 'SMP', 'SMA/SMK'],
 
-  SATUAN: ['OK', 'OH', 'PKT', 'KEG', 'UNIT', 'ORG', 'BLN', 'LOK', 'PCS', 'KG', 'LITER'],
+  SATUAN: ['OK', 'OH', 'PKT', 'KEG', 'UNIT', 'ORG', 'BLN', 'LOK', 'PCS', 'KG', 'LITER', 'SET', 'Psg', 'PAKET', 'HR'],
 
   BULAN: ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
     'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'],
@@ -174,6 +180,10 @@ var Database = {
     Config_Akun: ['Kode', 'Nama', 'Aktif'],
     Config_Kegiatan: ['Kode', 'Nama', 'Aktif'],
     Config_Prefix: ['Kode', 'Nama', 'Aktif'],
+    Data_RAB: [
+      'ID_RAB', 'Tahun_Anggaran', 'Bulan', 'Jenjang', 'Nama_Kegiatan',
+      'Kode_Program', 'Items_JSON', 'Total', 'School_ID', 'Timestamp'
+    ],
     Config_Export: ['TemplateName', 'Type', 'Columns', 'HeaderRow'],
     Config_Import: ['TemplateName', 'Type', 'Mapping'],
     Config_UI: ['Key', 'Value']
@@ -2108,4 +2118,491 @@ function selfTest() {
   Logger.log('=== SELF TEST RESULT ===');
   Logger.log(JSON.stringify(result, null, 2));
   return result;
+}
+
+/* =========================================================================
+ *  RAB (Rincian Anggaran Biaya) APIs
+ * ========================================================================= */
+
+function apiSaveRAB(payload) {
+  try {
+    payload = payload || {};
+    var schoolId = _resolveSchoolId(payload);
+    var items = payload.items || [];
+    var total = 0;
+    for (var i = 0; i < items.length; i++) {
+      total += _parseRupiah(items[i].jumlah || (items[i].kuantitas * items[i].hargaSatuan));
+    }
+    var id = _genId('RAB');
+    var row = {
+      id_rab: id,
+      tahun_anggaran: payload.tahun || '',
+      bulan: payload.bulan || '',
+      jenjang: payload.jenjang || '',
+      nama_kegiatan: payload.namaKegiatan || '',
+      kode_program: payload.kodeProgram || '',
+      items_json: JSON.stringify(items),
+      total: total,
+      school_id: schoolId,
+      timestamp: new Date().toISOString()
+    };
+    var ok = Database.insert('Data_RAB', row);
+    if (!ok) return { ok: false, error: 'Gagal menyimpan RAB.' };
+    return { ok: true, id: id, total: total };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiGetRABList(payload) {
+  try {
+    payload = payload || {};
+    var schoolId = _resolveSchoolId(payload);
+    var rows = Database.readAll('Data_RAB');
+    var results = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (r.school_id !== schoolId) continue;
+      if (payload.tahun && String(r.tahun_anggaran) !== String(payload.tahun)) continue;
+      if (payload.bulan && String(r.bulan) !== String(payload.bulan)) continue;
+      results.push({
+        id: r.id_rab,
+        tahun: r.tahun_anggaran,
+        bulan: r.bulan,
+        jenjang: r.jenjang,
+        namaKegiatan: r.nama_kegiatan,
+        total: r.total,
+        timestamp: r.timestamp
+      });
+    }
+    return { ok: true, data: results };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiGetRAB(payload) {
+  try {
+    payload = payload || {};
+    var id = payload.id || '';
+    var rows = Database.readAll('Data_RAB');
+    var found = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].id_rab === id) { found = rows[i]; break; }
+    }
+    if (!found) return { ok: false, error: 'RAB tidak ditemukan.' };
+    var items = [];
+    try { items = JSON.parse(found.items_json || '[]'); } catch (e2) { items = []; }
+    return {
+      ok: true,
+      rab: {
+        id: found.id_rab,
+        tahun: found.tahun_anggaran,
+        bulan: found.bulan,
+        jenjang: found.jenjang,
+        namaKegiatan: found.nama_kegiatan,
+        kodeProgram: found.kode_program,
+        items: items,
+        total: found.total,
+        schoolId: found.school_id,
+        timestamp: found.timestamp
+      }
+    };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiDeleteRAB(payload) {
+  try {
+    payload = payload || {};
+    var id = payload.id || '';
+    if (!id) return { ok: false, error: 'ID RAB diperlukan.' };
+    var ok = Database.deleteRowById('Data_RAB', id);
+    if (!ok) return { ok: false, error: 'RAB tidak ditemukan.' };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiExportRAB(payload) {
+  try {
+    payload = payload || {};
+    var id = payload.id || '';
+    var rows = Database.readAll('Data_RAB');
+    var found = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].id_rab === id) { found = rows[i]; break; }
+    }
+    if (!found) return { ok: false, error: 'RAB tidak ditemukan.' };
+
+    var items = [];
+    try { items = JSON.parse(found.items_json || '[]'); } catch (e2) { items = []; }
+
+    // Get school profile
+    var schools = Database.readAll('Data_Sekolah');
+    var school = null;
+    for (var s = 0; s < schools.length; s++) {
+      if (schools[s].school_id === found.school_id) { school = schools[s]; break; }
+    }
+    var namaSekolah = school ? school.nama_sekolah : '';
+    var lokasi = school ? school.alamat_sekolah : '';
+    var kepala = school ? school.kepala_sekolah : '';
+
+    var kodeProgram = found.kode_program || '';
+    var lines = [];
+    lines.push('RAB (RINCIAN ANGGARAN BIAYA)');
+    lines.push('"SEKOLAH RAKYAT 1 A PADA PPK 3 PUSAT PENDIDIKAN, PELATIHAN, DAN PENGEMBANGAN PROFESI"');
+    lines.push('TAHUN ANGGARAN ' + found.tahun_anggaran);
+    lines.push('Nama Sekolah, : ' + namaSekolah);
+    lines.push('Lokasi, : ' + lokasi);
+    lines.push('Jenjang, : ' + (found.jenjang || ''));
+    lines.push('Nama Kegiatan,: ' + (found.nama_kegiatan || ''));
+    lines.push('');
+    lines.push('Kode Program/Kegiatan,Jenis Belanja/Uraian,Kuantitas,Sat,H Satuan,Jumlah');
+    lines.push('');
+
+    // Derive prefix from kodeProgram
+    var prefix = kodeProgram || '';
+    if (prefix) {
+      lines.push(prefix);
+    }
+
+    // Group items by kodeAkun
+    var akunGroups = {};
+    var akunOrder = [];
+    for (var g = 0; g < items.length; g++) {
+      var item = items[g];
+      var ak = item.kodeAkun || '';
+      if (!akunGroups[ak]) {
+        akunGroups[ak] = { items: [], subtotal: 0 };
+        akunOrder.push(ak);
+      }
+      var jml = _parseRupiah(item.jumlah || (item.kuantitas * item.hargaSatuan));
+      akunGroups[ak].items.push(item);
+      akunGroups[ak].subtotal += jml;
+    }
+
+    // Kegiatan line
+    var kegLetter = '';
+    for (var k = 0; k < REF.KEGIATAN.length; k++) {
+      if (REF.KEGIATAN[k].nama === found.nama_kegiatan) {
+        kegLetter = REF.KEGIATAN[k].kode;
+        break;
+      }
+    }
+    if (kegLetter) {
+      lines.push(kegLetter + ',' + found.nama_kegiatan + ',,,,' + found.total);
+    }
+
+    // Per-akun rows
+    for (var a = 0; a < akunOrder.length; a++) {
+      var akunKode = akunOrder[a];
+      var grp = akunGroups[akunKode];
+      var akunNama = _akunNama(akunKode);
+      lines.push(akunKode + ',' + akunNama + ',,,,' + grp.subtotal);
+      for (var d = 0; d < grp.items.length; d++) {
+        var it = grp.items[d];
+        var itJml = _parseRupiah(it.jumlah || (it.kuantitas * it.hargaSatuan));
+        lines.push(',' + (it.uraian || '') + ',' + (it.kuantitas || '') + ',' + (it.satuan || '') + ',' + (it.hargaSatuan || '') + ',' + itJml);
+      }
+    }
+
+    lines.push('');
+    lines.push('JUMLAH TOTAL RAB,,,,,,' + found.total);
+    lines.push('');
+
+    // Footer
+    var today = new Date();
+    var months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    var dateStr = today.getDate() + ' ' + months[today.getMonth()] + ' ' + today.getFullYear();
+    var lokasiShort = lokasi || 'Pasuruan';
+    lines.push(lokasiShort + ', ' + dateStr);
+    lines.push('"Yang mengajukan,"');
+    lines.push('Kepala ' + namaSekolah);
+    lines.push('');
+    lines.push('');
+    lines.push(kepala || '');
+    lines.push('NIP. ');
+
+    return { ok: true, csv: lines.join('\n'), filename: 'RAB_' + (found.nama_kegiatan || 'export') + '.csv' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  AKRURAL Export API
+ * ========================================================================= */
+
+function apiExportRealisasiAKRURAL(payload) {
+  try {
+    payload = payload || {};
+    var schoolId = _resolveSchoolId(payload);
+    var tahun = payload.tahun || '';
+    var jenjang = payload.jenjang || '';
+
+    // Read RKKAL data
+    var rkkalAll = Database.readAll('Data_RKKAL');
+    var rkkal = [];
+    for (var i = 0; i < rkkalAll.length; i++) {
+      var r = rkkalAll[i];
+      if (r.school_id !== schoolId) continue;
+      if (tahun && String(r.tahun_anggaran) !== String(tahun)) continue;
+      if (jenjang && r.jenjang !== jenjang) continue;
+      rkkal.push(r);
+    }
+
+    // Read Rekap data for realisasi
+    var rekapAll = Database.readAll('Data_Rekap');
+    var rekap = [];
+    for (var j = 0; j < rekapAll.length; j++) {
+      var rk = rekapAll[j];
+      if (rk.school_id !== schoolId) continue;
+      if (tahun && String(rk.tahun_anggaran) !== String(tahun)) continue;
+      if (jenjang && rk.jenjang !== jenjang) continue;
+      rekap.push(rk);
+    }
+
+    // Build realisasi lookup: kode_kegiatan + kode_akun => total
+    var realisasiMap = {};
+    for (var m = 0; m < rekap.length; m++) {
+      var rr = rekap[m];
+      var mapKey = (rr.kode_kegiatan || '') + '|' + (rr.kode_akun || '');
+      if (!realisasiMap[mapKey]) realisasiMap[mapKey] = 0;
+      realisasiMap[mapKey] += _parseRupiah(rr.jumlah);
+    }
+
+    // Group RKKAL by kode_kegiatan then kode_akun
+    var kegOrder = [];
+    var kegMap = {};
+    for (var n = 0; n < rkkal.length; n++) {
+      var rk2 = rkkal[n];
+      var keg = rk2.kode_kegiatan || '';
+      if (!kegMap[keg]) {
+        kegMap[keg] = { nama: rk2.nama_kegiatan || _kegiatanNama(keg), akunOrder: [], akunMap: {}, paguTotal: 0 };
+        kegOrder.push(keg);
+      }
+      var ak2 = rk2.kode_akun || '';
+      if (!kegMap[keg].akunMap[ak2]) {
+        kegMap[keg].akunMap[ak2] = { nama: rk2.nama_akun || _akunNama(ak2), items: [], paguTotal: 0 };
+        kegMap[keg].akunOrder.push(ak2);
+      }
+      var pagu = _parseRupiah(rk2.jumlah_biaya);
+      kegMap[keg].akunMap[ak2].items.push(rk2);
+      kegMap[keg].akunMap[ak2].paguTotal += pagu;
+      kegMap[keg].paguTotal += pagu;
+    }
+
+    // Build CSV lines
+    var lines = [];
+    lines.push('KODE AKUN,PROGRAM/KEG/OUTPUT,VOL,SAT,H SATUAN,PAGU,REALISASI AKRURAL,%,SALDO AKRURAL');
+
+    var grandPagu = 0;
+    var grandRealisasi = 0;
+
+    for (var ki = 0; ki < kegOrder.length; ki++) {
+      var kCode = kegOrder[ki];
+      var kData = kegMap[kCode];
+      var kRealisasi = 0;
+
+      // Calculate kegiatan-level realisasi
+      for (var ai = 0; ai < kData.akunOrder.length; ai++) {
+        var aCode = kData.akunOrder[ai];
+        var rKey = kCode + '|' + aCode;
+        kRealisasi += (realisasiMap[rKey] || 0);
+      }
+
+      var kPct = kData.paguTotal > 0 ? Math.round(kRealisasi / kData.paguTotal * 100) : 0;
+      var kSaldo = kData.paguTotal - kRealisasi;
+      lines.push(kCode + ',' + kData.nama + ',,,,' + kData.paguTotal + ',' + kRealisasi + ',' + kPct + ',' + kSaldo);
+
+      grandPagu += kData.paguTotal;
+      grandRealisasi += kRealisasi;
+
+      // Per-akun rows
+      for (var ai2 = 0; ai2 < kData.akunOrder.length; ai2++) {
+        var aCode2 = kData.akunOrder[ai2];
+        var aData = kData.akunMap[aCode2];
+        var rKey2 = kCode + '|' + aCode2;
+        var aRealisasi = realisasiMap[rKey2] || 0;
+        var aPct = aData.paguTotal > 0 ? Math.round(aRealisasi / aData.paguTotal * 100) : 0;
+        var aSaldo = aData.paguTotal - aRealisasi;
+        lines.push(aCode2 + ',' + aData.nama + ',,,,' + aData.paguTotal + ',' + aRealisasi + ',' + aPct + ',' + aSaldo);
+
+        // Detail items
+        for (var di = 0; di < aData.items.length; di++) {
+          var itm = aData.items[di];
+          var itmPagu = _parseRupiah(itm.jumlah_biaya);
+          lines.push(',' + (itm.uraian || '') + ',' + (itm.volume || '') + ',' + (itm.satuan || '') + ',' + (itm.harga_satuan || '') + ',' + itmPagu + ',,,' );
+        }
+      }
+    }
+
+    var grandPct = grandPagu > 0 ? Math.round(grandRealisasi / grandPagu * 100) : 0;
+    var grandSaldo = grandPagu - grandRealisasi;
+    lines.push('');
+    lines.push('TOTAL,,,,,,' + grandPagu + ',' + grandRealisasi + ',' + grandPct + ',' + grandSaldo);
+
+    return { ok: true, csv: lines.join('\n'), filename: 'Realisasi_AKRURAL_' + tahun + '.csv' };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/* =========================================================================
+ *  DATABASE BACKUP & HEALTH APIs
+ * ========================================================================= */
+
+function apiSetupDatabase() {
+  return _withAuth('Admin', function () {
+    var ss = Database.getDatabase();
+    Database.ensureSheets(ss);
+    var health = _checkDbHealth();
+    return { ok: true, health: health };
+  });
+}
+
+function apiCheckDatabaseHealth() {
+  try {
+    var health = _checkDbHealth();
+    return { ok: true, health: health };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function _checkDbHealth() {
+  var ss = Database.getDatabase();
+  var results = [];
+  var names = Object.keys(Database.HEADERS);
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var sheet = ss.getSheetByName(name);
+    var exists = !!sheet;
+    var rowCount = 0;
+    var actualColumns = 0;
+    var expectedColumns = Database.HEADERS[name].length;
+    var columnsOk = false;
+    if (sheet) {
+      rowCount = sheet.getLastRow() > 0 ? sheet.getLastRow() - 1 : 0;
+      actualColumns = sheet.getLastColumn();
+      columnsOk = actualColumns === expectedColumns;
+    }
+    results.push({
+      sheetName: name,
+      exists: exists,
+      rowCount: rowCount,
+      expectedColumns: expectedColumns,
+      actualColumns: actualColumns,
+      columnsOk: columnsOk
+    });
+  }
+  return results;
+}
+
+function apiCreateBackup() {
+  try {
+    var ss = Database.getDatabase();
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2) + '_' + ('0' + now.getHours()).slice(-2) + ('0' + now.getMinutes()).slice(-2);
+    var backupName = 'Backup_ERP_' + dateStr;
+    var folderName = 'Backup_ERP_Sekolah_Rakyat';
+
+    // Find or create backup folder
+    var folders = DriveApp.getFoldersByName(folderName);
+    var folder;
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      folder = DriveApp.createFolder(folderName);
+    }
+
+    // Copy the spreadsheet
+    var file = DriveApp.getFileById(ss.getId());
+    var copy = file.makeCopy(backupName, folder);
+
+    return { ok: true, url: copy.getUrl(), name: backupName, id: copy.getId() };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiListBackups() {
+  try {
+    var folderName = 'Backup_ERP_Sekolah_Rakyat';
+    var folders = DriveApp.getFoldersByName(folderName);
+    if (!folders.hasNext()) return { ok: true, backups: [] };
+    var folder = folders.next();
+    var files = folder.getFiles();
+    var backups = [];
+    while (files.hasNext()) {
+      var f = files.next();
+      backups.push({
+        id: f.getId(),
+        name: f.getName(),
+        date: f.getDateCreated().toISOString(),
+        url: f.getUrl()
+      });
+    }
+    return { ok: true, backups: backups };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function apiRestoreBackup(payload) {
+  return _withAuth('Admin', function () {
+    payload = payload || {};
+    var backupId = payload.backupId || '';
+    if (!backupId) return { ok: false, error: 'backupId diperlukan.' };
+
+    var backupSs = SpreadsheetApp.openById(backupId);
+    var mainSs = Database.getDatabase();
+    var names = Object.keys(Database.HEADERS);
+
+    for (var i = 0; i < names.length; i++) {
+      var sheetName = names[i];
+      var srcSheet = backupSs.getSheetByName(sheetName);
+      if (!srcSheet) continue;
+      var destSheet = mainSs.getSheetByName(sheetName);
+      if (!destSheet) {
+        destSheet = mainSs.insertSheet(sheetName);
+      }
+
+      // Clear destination and copy data
+      destSheet.clear();
+      var data = srcSheet.getDataRange().getValues();
+      if (data.length > 0) {
+        destSheet.getRange(1, 1, data.length, data[0].length).setValues(data);
+      }
+    }
+
+    return { ok: true };
+  });
+}
+
+function apiSetupDailyBackup() {
+  return _withAuth('Admin', function () {
+    ScriptApp.newTrigger('dailyBackup').timeBased().everyDays(1).atHour(2).create();
+    return { ok: true };
+  });
+}
+
+function apiRemoveDailyBackup() {
+  return _withAuth('Admin', function () {
+    var triggers = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === 'dailyBackup') {
+        ScriptApp.deleteTrigger(triggers[i]);
+      }
+    }
+    return { ok: true };
+  });
+}
+
+function dailyBackup() {
+  try {
+    var ss = Database.getDatabase();
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2) + '_' + ('0' + now.getHours()).slice(-2) + ('0' + now.getMinutes()).slice(-2);
+    var backupName = 'Backup_ERP_' + dateStr;
+    var folderName = 'Backup_ERP_Sekolah_Rakyat';
+
+    var folders = DriveApp.getFoldersByName(folderName);
+    var folder;
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      folder = DriveApp.createFolder(folderName);
+    }
+
+    var file = DriveApp.getFileById(ss.getId());
+    file.makeCopy(backupName, folder);
+  } catch (e) {
+    Logger.log('dailyBackup error: ' + String(e && e.message || e));
+  }
 }

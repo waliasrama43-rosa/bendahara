@@ -577,6 +577,13 @@ function _parseNum(val) {
   var n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
   return isNaN(n) ? 0 : n;
 }
+function _csvField(v) {
+  v = String(v == null ? '' : v);
+  if (v.indexOf(',') >= 0 || v.indexOf('"') >= 0 || v.indexOf('\n') >= 0 || v.indexOf('\r') >= 0) {
+    return '"' + v.replace(/"/g, '""') + '"';
+  }
+  return v;
+}
 function _splitCsvLine(line) {
   var result = [], cur = '', inQuotes = false;
   for (var i = 0; i < line.length; i++) {
@@ -2245,10 +2252,10 @@ function apiExportRAB(payload) {
     lines.push('RAB (RINCIAN ANGGARAN BIAYA)');
     lines.push('"SEKOLAH RAKYAT 1 A PADA PPK 3 PUSAT PENDIDIKAN, PELATIHAN, DAN PENGEMBANGAN PROFESI"');
     lines.push('TAHUN ANGGARAN ' + found.tahun_anggaran);
-    lines.push('Nama Sekolah, : ' + namaSekolah);
-    lines.push('Lokasi, : ' + lokasi);
-    lines.push('Jenjang, : ' + (found.jenjang || ''));
-    lines.push('Nama Kegiatan,: ' + (found.nama_kegiatan || ''));
+    lines.push('Nama Sekolah, : ' + _csvField(namaSekolah));
+    lines.push('Lokasi, : ' + _csvField(lokasi));
+    lines.push('Jenjang, : ' + _csvField(found.jenjang || ''));
+    lines.push('Nama Kegiatan,: ' + _csvField(found.nama_kegiatan || ''));
     lines.push('');
     lines.push('Kode Program/Kegiatan,Jenis Belanja/Uraian,Kuantitas,Sat,H Satuan,Jumlah');
     lines.push('');
@@ -2283,7 +2290,7 @@ function apiExportRAB(payload) {
       }
     }
     if (kegLetter) {
-      lines.push(kegLetter + ',' + found.nama_kegiatan + ',,,,' + found.total);
+      lines.push(kegLetter + ',' + _csvField(found.nama_kegiatan) + ',,,,' + found.total);
     }
 
     // Per-akun rows
@@ -2291,11 +2298,11 @@ function apiExportRAB(payload) {
       var akunKode = akunOrder[a];
       var grp = akunGroups[akunKode];
       var akunNama = _akunNama(akunKode);
-      lines.push(akunKode + ',' + akunNama + ',,,,' + grp.subtotal);
+      lines.push(akunKode + ',' + _csvField(akunNama) + ',,,,' + grp.subtotal);
       for (var d = 0; d < grp.items.length; d++) {
         var it = grp.items[d];
         var itJml = _parseRupiah(it.jumlah || (it.kuantitas * it.hargaSatuan));
-        lines.push(',' + (it.uraian || '') + ',' + (it.kuantitas || '') + ',' + (it.satuan || '') + ',' + (it.hargaSatuan || '') + ',' + itJml);
+        lines.push(',' + _csvField(it.uraian) + ',' + (it.kuantitas || '') + ',' + _csvField(it.satuan) + ',' + (it.hargaSatuan || '') + ',' + itJml);
       }
     }
 
@@ -2308,12 +2315,12 @@ function apiExportRAB(payload) {
     var months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
     var dateStr = today.getDate() + ' ' + months[today.getMonth()] + ' ' + today.getFullYear();
     var lokasiShort = lokasi || 'Pasuruan';
-    lines.push(lokasiShort + ', ' + dateStr);
+    lines.push(_csvField(lokasiShort + ', ' + dateStr));
     lines.push('"Yang mengajukan,"');
-    lines.push('Kepala ' + namaSekolah);
+    lines.push('Kepala ' + _csvField(namaSekolah));
     lines.push('');
     lines.push('');
-    lines.push(kepala || '');
+    lines.push(_csvField(kepala || ''));
     lines.push('NIP. ');
 
     return { ok: true, content: lines.join('\n'), filename: 'RAB_' + (found.nama_kegiatan || 'export') + '.csv' };
@@ -2404,7 +2411,7 @@ function apiExportRealisasiAKRURAL(payload) {
 
       var kPct = kData.paguTotal > 0 ? Math.round(kRealisasi / kData.paguTotal * 100) : 0;
       var kSaldo = kData.paguTotal - kRealisasi;
-      lines.push(kCode + ',' + kData.nama + ',,,,' + kData.paguTotal + ',' + kRealisasi + ',' + kPct + ',' + kSaldo);
+      lines.push(kCode + ',' + _csvField(kData.nama) + ',,,,' + kData.paguTotal + ',' + kRealisasi + ',' + kPct + ',' + kSaldo);
 
       grandPagu += kData.paguTotal;
       grandRealisasi += kRealisasi;
@@ -2417,13 +2424,13 @@ function apiExportRealisasiAKRURAL(payload) {
         var aRealisasi = realisasiMap[rKey2] || 0;
         var aPct = aData.paguTotal > 0 ? Math.round(aRealisasi / aData.paguTotal * 100) : 0;
         var aSaldo = aData.paguTotal - aRealisasi;
-        lines.push(aCode2 + ',' + aData.nama + ',,,,' + aData.paguTotal + ',' + aRealisasi + ',' + aPct + ',' + aSaldo);
+        lines.push(aCode2 + ',' + _csvField(aData.nama) + ',,,,' + aData.paguTotal + ',' + aRealisasi + ',' + aPct + ',' + aSaldo);
 
         // Detail items
         for (var di = 0; di < aData.items.length; di++) {
           var itm = aData.items[di];
           var itmPagu = _parseRupiah(itm.jumlah_biaya);
-          lines.push(',' + (itm.uraian || '') + ',' + (itm.volume || '') + ',' + (itm.satuan || '') + ',' + (itm.harga_satuan || '') + ',' + itmPagu + ',,,' );
+          lines.push(',' + _csvField(itm.uraian) + ',' + (itm.volume || '') + ',' + _csvField(itm.satuan) + ',' + (itm.harga_satuan || '') + ',' + itmPagu + ',,,' );
         }
       }
     }
@@ -2431,7 +2438,7 @@ function apiExportRealisasiAKRURAL(payload) {
     var grandPct = grandPagu > 0 ? Math.round(grandRealisasi / grandPagu * 100) : 0;
     var grandSaldo = grandPagu - grandRealisasi;
     lines.push('');
-    lines.push('TOTAL,,,,,,' + grandPagu + ',' + grandRealisasi + ',' + grandPct + ',' + grandSaldo);
+    lines.push('TOTAL,,,,,' + grandPagu + ',' + grandRealisasi + ',' + grandPct + ',' + grandSaldo);
 
     return { ok: true, content: lines.join('\n'), filename: 'Realisasi_AKRURAL_' + tahun + '.csv' };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }

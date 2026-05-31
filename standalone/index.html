@@ -142,7 +142,7 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
     }
 
     function rupiah(n){ n = Number(n) || 0; return 'Rp ' + n.toLocaleString('id-ID'); }
-    function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
     function fmtDate(s){ if(!s) return '-'; var d = new Date(s); if (isNaN(d.getTime())) return String(s); return d.toLocaleDateString('id-ID', {day:'2-digit',month:'short',year:'numeric'}); }
 
     function openModal(title, bodyHtml, onSave){

@@ -2173,7 +2173,7 @@ function apiGetRABList(payload) {
         timestamp: r.timestamp
       });
     }
-    return { ok: true, data: results };
+    return { ok: true, list: results };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 
@@ -2191,18 +2191,16 @@ function apiGetRAB(payload) {
     try { items = JSON.parse(found.items_json || '[]'); } catch (e2) { items = []; }
     return {
       ok: true,
-      rab: {
-        id: found.id_rab,
-        tahun: found.tahun_anggaran,
-        bulan: found.bulan,
-        jenjang: found.jenjang,
-        namaKegiatan: found.nama_kegiatan,
-        kodeProgram: found.kode_program,
-        items: items,
-        total: found.total,
-        schoolId: found.school_id,
-        timestamp: found.timestamp
-      }
+      id: found.id_rab,
+      tahun: found.tahun_anggaran,
+      bulan: found.bulan,
+      jenjang: found.jenjang,
+      namaKegiatan: found.nama_kegiatan,
+      kodeProgram: found.kode_program,
+      items: items,
+      total: found.total,
+      schoolId: found.school_id,
+      timestamp: found.timestamp
     };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
@@ -2318,7 +2316,7 @@ function apiExportRAB(payload) {
     lines.push(kepala || '');
     lines.push('NIP. ');
 
-    return { ok: true, csv: lines.join('\n'), filename: 'RAB_' + (found.nama_kegiatan || 'export') + '.csv' };
+    return { ok: true, content: lines.join('\n'), filename: 'RAB_' + (found.nama_kegiatan || 'export') + '.csv' };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 
@@ -2435,7 +2433,7 @@ function apiExportRealisasiAKRURAL(payload) {
     lines.push('');
     lines.push('TOTAL,,,,,,' + grandPagu + ',' + grandRealisasi + ',' + grandPct + ',' + grandSaldo);
 
-    return { ok: true, csv: lines.join('\n'), filename: 'Realisasi_AKRURAL_' + tahun + '.csv' };
+    return { ok: true, content: lines.join('\n'), filename: 'Realisasi_AKRURAL_' + tahun + '.csv' };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 
@@ -2454,8 +2452,8 @@ function apiSetupDatabase() {
 
 function apiCheckDatabaseHealth() {
   try {
-    var health = _checkDbHealth();
-    return { ok: true, health: health };
+    var sheets = _checkDbHealth();
+    return { ok: true, sheets: sheets };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 }
 
@@ -2477,19 +2475,19 @@ function _checkDbHealth() {
       columnsOk = actualColumns === expectedColumns;
     }
     results.push({
-      sheetName: name,
+      name: name,
       exists: exists,
-      rowCount: rowCount,
+      rows: rowCount,
       expectedColumns: expectedColumns,
       actualColumns: actualColumns,
-      columnsOk: columnsOk
+      columnsMatch: columnsOk
     });
   }
   return results;
 }
 
 function apiCreateBackup() {
-  try {
+  return _withAuth('Admin', function () {
     var ss = Database.getDatabase();
     var now = new Date();
     var dateStr = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2) + '_' + ('0' + now.getHours()).slice(-2) + ('0' + now.getMinutes()).slice(-2);
@@ -2510,11 +2508,11 @@ function apiCreateBackup() {
     var copy = file.makeCopy(backupName, folder);
 
     return { ok: true, url: copy.getUrl(), name: backupName, id: copy.getId() };
-  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
 }
 
 function apiListBackups() {
-  try {
+  return _withAuth('Admin', function () {
     var folderName = 'Backup_ERP_Sekolah_Rakyat';
     var folders = DriveApp.getFoldersByName(folderName);
     if (!folders.hasNext()) return { ok: true, backups: [] };
@@ -2531,7 +2529,7 @@ function apiListBackups() {
       });
     }
     return { ok: true, backups: backups };
-  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
 }
 
 function apiRestoreBackup(payload) {
@@ -2567,6 +2565,13 @@ function apiRestoreBackup(payload) {
 
 function apiSetupDailyBackup() {
   return _withAuth('Admin', function () {
+    // Remove existing dailyBackup triggers to prevent duplicates
+    var triggers = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction() === 'dailyBackup') {
+        ScriptApp.deleteTrigger(triggers[i]);
+      }
+    }
     ScriptApp.newTrigger('dailyBackup').timeBased().everyDays(1).atHour(2).create();
     return { ok: true };
   });

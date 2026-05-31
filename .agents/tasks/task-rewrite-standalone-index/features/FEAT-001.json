@@ -1,0 +1,47 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Complete rewrite of standalone/index.html to create a clean, well-structured frontend that integrates with all v2 backend APIs in Code.gs. The file must be a single HTML document with inline CSS and JS, matching the UI plan from HANDOFF.md.",
+  "status": "completed",
+  "steps": [
+    "Rewrite standalone/index.html completely as a single HTML file with inline <style> and <script> sections.",
+    "CSS section: Preserve the existing design language (dark sidebar with gradient, light content area, card-based dashboard, tab panels, modal overlay, toast notifications, loading bar, responsive breakpoints). Keep CSS variables for theming. The current CSS is excellent - use it as the foundation but ensure it covers all new UI elements.",
+    "HTML structure: App layout with sidebar (brand/logo, nav buttons, school info, user info) and main area (topbar with title/subtitle/refresh, content area). Include toast container, modal overlay, and loading bar.",
+    "JS Helpers section: Implement gcall (Promise wrapper for google.script.run), toast, rupiah, esc, fmtDate, openModal, closeModal, terbilang, parseRupiahJS, showLoading, applyTheme, downloadCsv.",
+    "JS Dropdown helpers: akunOptions, kegiatanOptions, makPrefixOptions, satuanOptions, tahunOptions, bulanNamaOptions, jenjangOptions - all using STATE.refs data.",
+    "JS Navigation: buildNav (sidebar menu items based on role), navigate router function, PAGE_META definitions. Pages: dashboard, rkkal, rekap, realisasi, pajak, export, pengaturan, users, configAkun, configKegiatan, configPrefix, configExport, configImport, configTheme, diagnostik.",
+    "JS Dashboard page (renderDashboard): 4 stat cards (Pagu, Realisasi, Sisa, Serapan) + 4 count cards (RKKAL items, Rekap items, Verified, Pending). Google Charts (Pie chart for serapan per kegiatan, Bar chart for pagu vs realisasi per akun, Area chart for monthly spending trend). Uses apiGetDashboard and apiGetChartData.",
+    "JS RKKAL page (renderRKKAL): 3 tabs - Input Manual (dynamic table rows with dropdowns for kegiatan/akun/satuan, auto-calc jumlah=vol*harga, save via apiSaveRKKAL), Daftar RKKAL (filter by tahun/jenjang, table with edit/delete actions via apiGetRKKAL/apiUpdateRKKAL/apiDeleteRKKAL), Upload CSV (textarea + apiUploadRKKALCsv with template selection).",
+    "JS Rekap page (renderRekap): 3 tabs - Input Transaksi (form with date, toko, prefix/kegiatan/akun dropdowns, live MAK preview, manual MAK override, auto-fill bulan/tahun from date, save via apiSaveRekap), Daftar Rekap (filter by tahun/bulan/jenjang, table with verify/edit/delete/kwitansi/upload bukti actions), Upload CSV (textarea + apiUploadRekapCsv with template selection).",
+    "JS Kwitansi (kwitansiRekap): Open new window with printable kwitansi format showing school name, toko, terbilang, uraian, MAK code, jumlah.",
+    "JS Realisasi page (renderRealisasi): Toggle group by akun/kegiatan, filter tahun/jenjang, table showing Pagu|Realisasi|Sisa|%Serapan per group. Uses apiGetRealisasi.",
+    "JS Pajak calculator (renderPajak/hitungPajak): DPP/inclusive mode, PPN rate input, PPh type selection (Pasal 22/23/21/none), NPWP checkbox. Shows DPP, PPN, PPh, Bruto, Dibayar ke rekanan, Disetor ke negara.",
+    "JS Export page (renderExport): Export Rekap SPJ button (apiExportRekap with tahun/bulan/jenjang/template filters), Export RKKAL button (apiExportRKKAL with tahun/jenjang/template filters), Seed Demo button (apiSeedDummy). Load export template dropdowns.",
+    "JS Pengaturan page (renderPengaturan): Form for namaSekolah, kepalaSekolah, bendahara, alamat. Load via apiGetSchool, save via apiSaveSchool.",
+    "JS Admin pages: User management (apiGetUsers/apiAddUser/apiUpdateUser/apiDeleteUser), Config Libraries for Akun/Kegiatan/Prefix (apiGetConfig*/apiAddConfig*/apiUpdateConfig*), Export Templates (apiGetExportTemplates/apiSaveExportTemplate/apiDeleteExportTemplate), Import Templates (apiGetImportTemplates/apiSaveImportTemplate/apiDeleteImportTemplate), Theme config (apiGetUIConfig/apiSaveUIConfig/apiUploadLogo), Diagnostik (apiDiagnostics).",
+    "JS Boot sequence: Load Google Charts, call apiGetCurrentUser to check access, call apiBootstrap to get refs/schoolId/summary/spreadsheetUrl/uiConfig, apply theme, build nav, show app, navigate to dashboard. Handle access denied for Guest/unknown users.",
+    "Wire event listeners: nav click delegation, refresh button, modal close on overlay click."
+  ],
+  "acceptance_criteria": [
+    "standalone/index.html is a complete, single HTML file with all CSS and JS inline",
+    "All 36 API calls from Code.gs that are user-facing are correctly invoked via gcall()",
+    "Navigation sidebar has all menu items matching HANDOFF.md plan (Dashboard, Arus Masuk, Arus Keluar, Realisasi, Kalkulator Pajak, Export, Pengaturan with admin sub-items)",
+    "Dashboard shows 8 stat cards and 3 Google Charts",
+    "RKKAL page has 3 tabs (Input Manual with dynamic rows, Daftar with filter/edit/delete, Upload CSV)",
+    "Rekap page has 3 tabs (Input Transaksi form with MAK preview, Daftar with all actions, Upload CSV)",
+    "Realisasi page shows pagu vs realisasi comparison table with group-by toggle",
+    "Pajak calculator computes PPN/PPh correctly",
+    "Export page has download buttons for Rekap and RKKAL plus seed demo",
+    "Admin pages: Users, Config Libraries, Templates, Theme, Diagnostik all functional",
+    "The file has no JavaScript syntax errors (extractable JS passes basic validation)",
+    "Responsive design works (sidebar collapses on mobile, grid adapts)"
+  ],
+  "verification": [
+    "Extract the JavaScript from the HTML file and validate syntax with node --check",
+    "Verify all 36 API function names are present in the file using grep",
+    "Check the HTML file is well-formed (proper DOCTYPE, head, body, no unclosed major tags)",
+    "Confirm file size is reasonable (800-1200 lines for a complete SPA)"
+  ],
+  "blocked_reason": null,
+  "findings": "File rewritten to 1003 lines. JS syntax validates cleanly with node --check. 45 of 46 API names present (apiGetRefs excluded because its data is already provided by apiBootstrap response). All CSS classes, HTML structure elements, and navigation sections implemented. Modal overlay now closes on background click. ES5-compatible code used throughout."
+}

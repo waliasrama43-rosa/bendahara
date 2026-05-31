@@ -242,6 +242,7 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
       var items = [
         {page:'dashboard', ico:'&#9632;', label:'Dashboard'},
         {page:'rkkal', ico:'&#43;', label:'Arus Masuk - RKKAL'},
+        {page:'rab', ico:'&#9744;', label:'RAB'},
         {page:'rekap', ico:'&#9783;', label:'Arus Keluar - Rekap SPJ'},
         {page:'realisasi', ico:'&#9776;', label:'Realisasi Anggaran'},
         {page:'pajak', ico:'&#37;', label:'Kalkulator Pajak'}
@@ -264,6 +265,7 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
           {page:'configExport', label:'Template Export'},
           {page:'configImport', label:'Template Import'},
           {page:'configTheme', label:'Tema & Tampilan'},
+          {page:'setupDb', label:'Setup & Database'},
           {page:'diagnostik', label:'Diagnostik'}
         ];
         html += '<div class="sub-nav">';
@@ -293,6 +295,8 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
       configExport:{ title:'Template Export', sub:'Kelola template ekspor data' },
       configImport:{ title:'Template Import', sub:'Kelola template impor data' },
       configTheme: { title:'Tema & Tampilan', sub:'Sesuaikan warna dan logo' },
+      rab: { title:'RAB - Rincian Anggaran Biaya', sub:'Buat dan kelola RAB bulanan' },
+      setupDb: { title:'Setup & Database', sub:'Kelola database dan backup' },
       diagnostik:  { title:'Diagnostik Sistem', sub:'Informasi teknis dan status' }
     };
 
@@ -318,6 +322,8 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
       else if (page === 'configExport') renderConfigExport();
       else if (page === 'configImport') renderConfigImport();
       else if (page === 'configTheme') renderConfigTheme();
+      else if (page === 'rab') renderRAB();
+      else if (page === 'setupDb') renderSetupDb();
       else if (page === 'diagnostik') renderDiagnostik();
     }
 
@@ -695,7 +701,8 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
       c.innerHTML =
         '<div class="panel"><h2>Export Rekap SPJ</h2><p class="desc">Unduh data realisasi (arus keluar) dalam format CSV.</p><div class="grid3"><div class="field"><label>Tahun</label><select id="expRkpTahun">'+tahunOptions('')+'</select></div><div class="field"><label>Bulan</label><select id="expRkpBulan">'+bulanNamaOptions('')+'</select></div><div class="field"><label>Jenjang</label><select id="expRkpJenjang">'+jenjangOptions('','Semua')+'</select></div></div><div class="field"><label>Template Export</label><select id="expRekapTemplate"><option value="">(default)</option></select></div><div class="row-actions"><button class="btn primary" id="expRekapBtn">Unduh Rekap SPJ (CSV)</button></div></div>' +
         '<div class="panel"><h2>Export RKKAL</h2><p class="desc">Unduh data anggaran (arus masuk) dalam format CSV.</p><div class="grid2"><div class="field"><label>Tahun</label><select id="expRkkTahun">'+tahunOptions('')+'</select></div><div class="field"><label>Jenjang</label><select id="expRkkJenjang">'+jenjangOptions('','Semua')+'</select></div></div><div class="field"><label>Template Export</label><select id="expRkkalTemplate"><option value="">(default)</option></select></div><div class="row-actions"><button class="btn primary" id="expRkkalBtn">Unduh RKKAL (CSV)</button></div></div>' +
-        '<div class="panel"><h2>Data Contoh (Seed Demo)</h2><p class="desc">Tambahkan data RKKAL & Rekap contoh untuk uji coba.</p><div class="row-actions"><button class="btn ghost" id="seedBtn">+ Isi Data Contoh</button></div></div>';
+        '<div class="panel"><h2>Data Contoh (Seed Demo)</h2><p class="desc">Tambahkan data RKKAL & Rekap contoh untuk uji coba.</p><div class="row-actions"><button class="btn ghost" id="seedBtn">+ Isi Data Contoh</button></div></div>' +
+        '<div class="panel"><h2>Export Realisasi (AKRURAL)</h2><p class="desc">Unduh laporan realisasi dalam format AKRURAL.</p><div class="grid2"><div class="field"><label>Tahun</label><select id="expAkruralTahun">'+tahunOptions('')+'</select></div><div class="field"><label>Jenjang</label><select id="expAkruralJenjang">'+jenjangOptions('')+'</select></div></div><div class="row-actions"><button class="btn primary" id="expAkruralBtn">Export Realisasi AKRURAL</button></div></div>';
       loadExportTemplateDropdowns();
       document.getElementById('expRekapBtn').addEventListener('click', function(){
         var btn=this; btn.disabled=true; var templateName=getVal('expRekapTemplate');
@@ -708,6 +715,11 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
       document.getElementById('seedBtn').addEventListener('click', function(){
         if(!confirm('Tambahkan data contoh?')) return; var btn=this; btn.disabled=true;
         gcall('apiSeedDummy',{schoolId:STATE.schoolId}).then(function(res){ btn.disabled=false; if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast('Demo: '+res.rkkal+' RKKAL, '+res.rekap+' Rekap ditambahkan.','ok'); }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message,'err'); });
+      });
+      document.getElementById('expAkruralBtn').addEventListener('click', function(){
+        var btn=this; btn.disabled=true;
+        var tahun=getVal('expAkruralTahun'), jenjang=getVal('expAkruralJenjang');
+        gcall('apiExportRealisasiAKRURAL', {schoolId:STATE.schoolId, tahun:tahun||undefined, jenjang:jenjang||undefined}).then(function(res){ btn.disabled=false; if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); if(res.content){ downloadCsv(res.filename||'realisasi_akrural.csv', res.content); toast('Export AKRURAL berhasil.','ok'); } else { toast('Tidak ada data.','err'); } }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message,'err'); });
       });
     }
     function loadExportTemplateDropdowns(){
@@ -919,6 +931,169 @@ td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shado
           }; reader.readAsDataURL(f);
         }
       });
+    }
+
+    /* ===================== RAB ===================== */
+    var rabRowCount = 0;
+    function renderRAB(){
+      var c = document.getElementById('content');
+      c.innerHTML =
+        '<div class="panel">' +
+          '<div class="tabs" id="rabTabs">' +
+            '<button data-tab="buat" class="active">Buat RAB</button>' +
+            '<button data-tab="daftar">Daftar RAB</button>' +
+          '</div>' +
+          '<div class="tabpane active" data-pane="buat">' +
+            '<h2>Buat RAB Baru</h2><p class="desc">Isi form di bawah untuk membuat Rincian Anggaran Biaya.</p>' +
+            '<div class="grid3"><div class="field"><label>Bulan</label><select id="rabBulan">'+bulanNamaOptions('')+'</select></div><div class="field"><label>Tahun</label><select id="rabTahun">'+tahunOptions(new Date().getFullYear())+'</select></div><div class="field"><label>Jenjang</label><select id="rabJenjang">'+jenjangOptions('')+'</select></div></div>' +
+            '<div class="field"><label>Nama Kegiatan</label><input id="rabNamaKegiatan" placeholder="Nama kegiatan"></div>' +
+            '<div style="overflow-x:auto"><table><thead><tr><th>#</th><th>Kode Akun</th><th>Uraian</th><th>Kuantitas</th><th>Satuan</th><th>Harga Satuan</th><th>Jumlah</th><th></th></tr></thead><tbody id="rabBody"></tbody></table></div>' +
+            '<div class="row-actions"><button class="btn ghost" id="rabAddRow">+ Tambah Baris</button><button class="btn primary" id="rabSave">Simpan RAB</button></div>' +
+          '</div>' +
+          '<div class="tabpane" data-pane="daftar">' +
+            '<h2>Daftar RAB</h2><p class="desc">Filter dan lihat dokumen RAB yang sudah tersimpan.</p>' +
+            '<div class="grid3"><div class="field"><label>Tahun</label><select id="rabListTahun">'+tahunOptions('')+'</select></div><div class="field"><label>Bulan</label><select id="rabListBulan">'+bulanNamaOptions('')+'</select></div><div class="field" style="display:flex;align-items:flex-end"><button class="btn primary" id="rabListLoad">Tampilkan</button></div></div>' +
+            '<div id="rabListBox"><div class="empty">Klik Tampilkan untuk memuat data.</div></div>' +
+          '</div>' +
+        '</div>';
+      wireGenericTabs('rabTabs');
+      rabRowCount = 0; addRabRow(); addRabRow();
+      document.getElementById('rabAddRow').addEventListener('click', addRabRow);
+      document.getElementById('rabSave').addEventListener('click', saveRAB);
+      document.getElementById('rabListLoad').addEventListener('click', loadRABList);
+    }
+    function addRabRow(){
+      rabRowCount++;
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td class="muted">'+rabRowCount+'</td><td><select class="rab-akun">'+akunOptions('')+'</select></td><td><input class="rab-uraian" placeholder="Uraian"></td><td><input class="rab-qty" type="number" placeholder="0" style="width:80px"></td><td><select class="rab-sat">'+satuanOptions('')+'</select></td><td><input class="rab-harga" type="number" placeholder="0" style="width:110px"></td><td><input class="rab-jumlah" readonly style="width:110px;background:#f8fafc"></td><td><button class="btn no tiny" title="Hapus">&#10005;</button></td>';
+      tr.querySelector('.rab-qty').addEventListener('input', function(){ calcRabRow(tr); });
+      tr.querySelector('.rab-harga').addEventListener('input', function(){ calcRabRow(tr); });
+      tr.querySelector('button').addEventListener('click', function(){ tr.parentNode.removeChild(tr); renumberRab(); });
+      document.getElementById('rabBody').appendChild(tr);
+    }
+    function calcRabRow(tr){ var qty = Number(tr.querySelector('.rab-qty').value)||0; var harga = Number(tr.querySelector('.rab-harga').value)||0; tr.querySelector('.rab-jumlah').value = qty*harga; }
+    function renumberRab(){ var rows = document.querySelectorAll('#rabBody tr'); for(var i=0;i<rows.length;i++) rows[i].cells[0].textContent=(i+1); rabRowCount=rows.length; }
+    function saveRAB(){
+      var bulan = getVal('rabBulan'); var tahun = getVal('rabTahun'); var jenjang = getVal('rabJenjang'); var namaKegiatan = getVal('rabNamaKegiatan');
+      if (!bulan){ toast('Pilih Bulan.', 'err'); return; }
+      if (!tahun){ toast('Pilih Tahun.', 'err'); return; }
+      if (!namaKegiatan){ toast('Nama Kegiatan wajib diisi.', 'err'); return; }
+      var trs = document.querySelectorAll('#rabBody tr'); var items = [];
+      for (var i=0;i<trs.length;i++){
+        var qty = Number(trs[i].querySelector('.rab-qty').value)||0;
+        var harga = Number(trs[i].querySelector('.rab-harga').value)||0;
+        items.push({ kodeAkun: trs[i].querySelector('.rab-akun').value, uraian: trs[i].querySelector('.rab-uraian').value, kuantitas: qty, satuan: trs[i].querySelector('.rab-sat').value, hargaSatuan: harga, jumlah: qty*harga });
+      }
+      var btn = document.getElementById('rabSave'); btn.disabled = true;
+      gcall('apiSaveRAB', { schoolId: STATE.schoolId, bulan: bulan, tahun: tahun, jenjang: jenjang, namaKegiatan: namaKegiatan, items: items }).then(function(res){
+        btn.disabled = false;
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+        toast('RAB berhasil disimpan.', 'ok');
+        renderRAB();
+      }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message, 'err'); });
+    }
+    function loadRABList(){
+      var tahun = getVal('rabListTahun'); var bulan = getVal('rabListBulan');
+      var box = document.getElementById('rabListBox');
+      box.innerHTML = '<div class="empty">Memuat...</div>';
+      gcall('apiGetRABList', { schoolId: STATE.schoolId, tahun: tahun||undefined, bulan: bulan||undefined }).then(function(res){
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+        var list = res.list || [];
+        if (!list.length){ box.innerHTML = '<div class="empty">Tidak ada data RAB.</div>'; return; }
+        var rows = list.map(function(r){
+          return '<tr><td>'+esc(r.bulan)+'</td><td>'+esc(r.tahun)+'</td><td>'+esc(r.jenjang)+'</td><td>'+esc(r.namaKegiatan)+'</td><td class="num">'+rupiah(r.total)+'</td><td>'+fmtDate(r.timestamp)+'</td><td style="white-space:nowrap"><button class="btn ghost tiny" onclick="detailRAB(\''+esc(r.id)+'\')">Detail</button> <button class="btn ghost tiny" onclick="exportRAB(\''+esc(r.id)+'\')">Export</button> <button class="btn no tiny" onclick="deleteRAB(\''+esc(r.id)+'\')">Hapus</button></td></tr>';
+        }).join('');
+        box.innerHTML = '<div style="overflow-x:auto"><table><thead><tr><th>Bulan</th><th>Tahun</th><th>Jenjang</th><th>Nama Kegiatan</th><th class="num">Total</th><th>Timestamp</th><th>Aksi</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+      }).catch(function(err){ box.innerHTML = '<div class="empty">Gagal: '+esc(err.message)+'</div>'; });
+    }
+    function detailRAB(id){
+      gcall('apiGetRAB', { id: id }).then(function(res){
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+        var items = res.items || [];
+        var html = '<table><thead><tr><th>Kode Akun</th><th>Uraian</th><th class="num">Kuantitas</th><th>Satuan</th><th class="num">Harga Satuan</th><th class="num">Jumlah</th></tr></thead><tbody>';
+        var total = 0;
+        items.forEach(function(it){
+          total += Number(it.jumlah)||0;
+          html += '<tr><td class="mono">'+esc(it.kodeAkun)+'</td><td>'+esc(it.uraian)+'</td><td class="num">'+(it.kuantitas||0)+'</td><td>'+esc(it.satuan)+'</td><td class="num">'+rupiah(it.hargaSatuan)+'</td><td class="num">'+rupiah(it.jumlah)+'</td></tr>';
+        });
+        html += '</tbody><tfoot><tr><th colspan="5" class="right">TOTAL</th><th class="num">'+rupiah(total)+'</th></tr></tfoot></table>';
+        openModal('Detail RAB', html, function(){ closeModal(); });
+      }).catch(function(err){ toast('Gagal: '+err.message, 'err'); });
+    }
+    function deleteRAB(id){
+      if (!confirm('Hapus dokumen RAB ini?')) return;
+      gcall('apiDeleteRAB', { id: id }).then(function(res){
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+        toast('RAB dihapus.', 'ok'); loadRABList();
+      }).catch(function(err){ toast('Gagal: '+err.message, 'err'); });
+    }
+    function exportRAB(id){
+      gcall('apiExportRAB', { id: id }).then(function(res){
+        if (!res || !res.ok) throw new Error((res && res.error) || 'Gagal');
+        if (res.content){ downloadCsv(res.filename||'rab_export.csv', res.content); toast('RAB diekspor.','ok'); } else { toast('Tidak ada data.','err'); }
+      }).catch(function(err){ toast('Gagal: '+err.message, 'err'); });
+    }
+
+    /* ===================== Setup & Database ===================== */
+    function renderSetupDb(){
+      var c = document.getElementById('content');
+      c.innerHTML =
+        '<div class="panel"><h2>Database Health</h2><p class="desc">Status kesehatan database (sheet).</p><div id="dbHealthBox"><div class="empty">Memuat...</div></div><div class="row-actions"><button class="btn primary" id="dbRepairBtn">Repair Database</button></div></div>' +
+        '<div class="panel"><h2>Backup Database</h2><p class="desc">Buat dan kelola backup spreadsheet.</p><div class="row-actions"><button class="btn primary" id="dbBackupBtn">Buat Backup Sekarang</button><button class="btn ghost" id="dbDailyOnBtn">Aktifkan Backup Harian</button><button class="btn ghost" id="dbDailyOffBtn">Nonaktifkan Backup Harian</button></div></div>' +
+        '<div class="panel"><h2>Daftar Backup</h2><p class="desc">Backup yang tersedia untuk restore.</p><div id="dbBackupList"><div class="empty">Memuat...</div></div></div>';
+      loadDbHealth();
+      loadBackupList();
+      document.getElementById('dbRepairBtn').addEventListener('click', function(){
+        var btn=this; btn.disabled=true;
+        gcall('apiSetupDatabase', null).then(function(res){ btn.disabled=false; if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast('Database diperbaiki.','ok'); loadDbHealth(); }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message,'err'); });
+      });
+      document.getElementById('dbBackupBtn').addEventListener('click', function(){
+        var btn=this; btn.disabled=true;
+        gcall('apiCreateBackup', null).then(function(res){ btn.disabled=false; if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast('Backup berhasil dibuat: '+(res.backupName||''),'ok'); loadBackupList(); }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message,'err'); });
+      });
+      document.getElementById('dbDailyOnBtn').addEventListener('click', function(){
+        var btn=this; btn.disabled=true;
+        gcall('apiSetupDailyBackup', null).then(function(res){ btn.disabled=false; if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast('Backup harian diaktifkan.','ok'); }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message,'err'); });
+      });
+      document.getElementById('dbDailyOffBtn').addEventListener('click', function(){
+        var btn=this; btn.disabled=true;
+        gcall('apiRemoveDailyBackup', null).then(function(res){ btn.disabled=false; if(!res||!res.ok) throw new Error((res&&res.error)||'Gagal'); toast('Backup harian dinonaktifkan.','ok'); }).catch(function(err){ btn.disabled=false; toast('Gagal: '+err.message,'err'); });
+      });
+    }
+    function loadDbHealth(){
+      var box = document.getElementById('dbHealthBox'); box.innerHTML = '<div class="empty">Memuat...</div>';
+      gcall('apiCheckDatabaseHealth', null).then(function(res){
+        if (!res||!res.ok) throw new Error((res&&res.error)||'Gagal');
+        var sheets = res.sheets || [];
+        if (!sheets.length){ box.innerHTML = '<div class="empty">Tidak ada info.</div>'; return; }
+        var rows = sheets.map(function(s){
+          var statusCls = s.exists ? 'verified' : 'rejected';
+          var statusLabel = s.exists ? 'OK' : 'Missing';
+          var colCls = s.columnsMatch ? 'verified' : 'rejected';
+          var colLabel = s.columnsMatch ? 'OK' : 'Mismatch';
+          return '<tr><td>'+esc(s.name)+'</td><td><span class="badge '+statusCls+'">'+statusLabel+'</span></td><td class="num">'+(s.rows||0)+'</td><td><span class="badge '+colCls+'">'+colLabel+'</span></td></tr>';
+        }).join('');
+        box.innerHTML = '<table><thead><tr><th>Sheet Name</th><th>Status</th><th class="num">Rows</th><th>Columns</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      }).catch(function(err){ box.innerHTML = '<div class="empty">Gagal: '+esc(err.message)+'</div>'; });
+    }
+    function loadBackupList(){
+      var box = document.getElementById('dbBackupList'); box.innerHTML = '<div class="empty">Memuat...</div>';
+      gcall('apiListBackups', null).then(function(res){
+        if (!res||!res.ok) throw new Error((res&&res.error)||'Gagal');
+        var backups = res.backups || [];
+        if (!backups.length){ box.innerHTML = '<div class="empty">Belum ada backup.</div>'; return; }
+        var rows = backups.map(function(b){
+          return '<tr><td>'+esc(b.name)+'</td><td>'+fmtDate(b.date)+'</td><td><a href="'+esc(b.url)+'" target="_blank" class="btn ghost tiny">Buka</a></td><td><button class="btn ghost tiny" onclick="restoreBackup(\''+esc(b.id)+'\',\''+esc(b.name)+'\')">Restore</button></td></tr>';
+        }).join('');
+        box.innerHTML = '<table><thead><tr><th>Nama</th><th>Tanggal</th><th>Link</th><th>Aksi</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      }).catch(function(err){ box.innerHTML = '<div class="empty">Gagal: '+esc(err.message)+'</div>'; });
+    }
+    function restoreBackup(backupId, backupName){
+      if (!confirm('Restore dari backup "'+backupName+'"? Data saat ini akan ditimpa.')) return;
+      gcall('apiRestoreBackup', { backupId: backupId }).then(function(res){
+        if (!res||!res.ok) throw new Error((res&&res.error)||'Gagal');
+        toast('Restore berhasil.','ok'); loadDbHealth();
+      }).catch(function(err){ toast('Gagal: '+err.message,'err'); });
     }
 
     /* ===================== Boot ===================== */
